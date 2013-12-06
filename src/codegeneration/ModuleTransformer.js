@@ -38,7 +38,8 @@ import {
   createMemberExpression,
   createObjectLiteralExpression,
   createUseStrictDirective,
-  createVariableStatement
+  createVariableStatement,
+  createScript
 } from './ParseTreeFactory';
 import {
   parseExpression,
@@ -55,6 +56,7 @@ export class ModuleTransformer extends TempVarTransformer {
     this.exportVisitor_ = new DirectExportVisitor();
     this.moduleSpecifierKind_ = null;
     this.url = null;
+    this.dependencies = [];
   }
 
   getTempVarNameForModuleSpecifier(moduleSpecifier) {
@@ -82,18 +84,14 @@ export class ModuleTransformer extends TempVarTransformer {
 
     this.popTempVarState();
 
-    var funcExpr = parseExpression `function() {
-      ${statements}
-    }`;
-
-    funcExpr = this.wrapModuleFunction(funcExpr);
+    var depPaths = this.dependencies.map(function(dep) {return dep.path});
+    var depLocals = this.dependencies.map(function(dep) {return dep.local});
+    var funcExpr = parseExpression
+      `define(${this.url}, ${depPaths}, function(${depLocals}) {
+        ${statements}
+      });`;
 
     return new Script(tree.location, [createExpressionStatement(funcExpr)]);
-  }
-
-  wrapModuleFunction(tree) {
-    return parseExpression
-      `System.get('@traceur/module').registerModule(${this.url}, ${tree}, this)`;
   }
 
   /**
@@ -172,19 +170,7 @@ export class ModuleTransformer extends TempVarTransformer {
    * @return {ParseTree}
    */
   transformModuleSpecifier(tree) {
-    var token = tree.token;
-
-    var name = tree.token.processedValue;
-    var url;
-    if (name[0] === '@') {
-      url = name;
-    } else {
-      assert(this.url);
-      // import/module {x} from 'name' is relative to the current file.
-      url = System.normalResolve(name, this.url);
-    }
-
-    return this.getModuleReference(url, this.moduleSpecifierKind_);
+    return tree;
   }
 
   getModuleReference(url, kind = undefined) {
@@ -224,7 +210,27 @@ export class ModuleTransformer extends TempVarTransformer {
     var binding = this.transformAny(tree.importClause);
     var initialiser = this.transformAny(tree.moduleSpecifier);
 
-    return createVariableStatement(VAR, binding, initialiser);
+    var depPath = initialiser.token.value.replace(/\'|\"/g, '');
+    var localName = '__dep' + this.dependencies.length;
+
+    // store dependencies, so that we can generate the function wrapper
+    this.dependencies.push({path: depPath, local: localName});
+
+    var localVars = binding.fields.map((field) => {
+      var local, remote;
+
+      if (field.element) { // import {x} from 'file.js';
+        local = field.element.binding.identifierToken;
+        remote = field.name.literalToken;
+      } else { // import {x as y} from 'file.js'
+        local = field.binding.identifierToken;
+        remote = field.binding.identifierToken;
+      }
+
+      return createVariableStatement(VAR, local, createMemberExpression(createIdentifierToken(localName), remote));
+    });
+
+    return createScript(localVars);
   }
 
   transformImportSpecifierSet(tree) {
