@@ -81,6 +81,7 @@ import {CloneTreeTransformer} from './codegeneration/CloneTreeTransformer';
 import {CommonJsModuleTransformer} from './codegeneration/CommonJsModuleTransformer';
 import {DirectExportVisitor} from './codegeneration/module/DirectExportVisitor';
 import {FromOptionsTransformer} from './codegeneration/FromOptionsTransformer';
+import {PureES6Transformer} from './codegeneration/PureES6Transformer';
 import {InlineModuleTransformer} from './codegeneration/InlineModuleTransformer';
 import {ModuleSpecifierVisitor} from './codegeneration/module/ModuleSpecifierVisitor';
 import {ModuleTransformer} from './codegeneration/ModuleTransformer';
@@ -93,6 +94,7 @@ export var codegeneration = {
   CloneTreeTransformer,
   CommonJsModuleTransformer,
   FromOptionsTransformer,
+  PureES6Transformer,
   InlineModuleTransformer,
   ModuleTransformer,
   ParseTreeFactory,
