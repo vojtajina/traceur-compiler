@@ -7098,7 +7098,7 @@ System.register("traceur@0.0.33/src/outputgeneration/ParseTreeWriter", [], funct
     visitImportDeclaration: function(tree) {
       this.write_(IMPORT);
       this.writeSpace_();
-      if (this.importClause) {
+      if (tree.importClause) {
         this.visitAny(tree.importClause);
         this.writeSpace_();
         this.write_(FROM);
@@ -21587,13 +21587,48 @@ System.register("traceur@0.0.33/src/codegeneration/CloneTreeTransformer", [], fu
       return CloneTreeTransformer;
     }};
 });
+System.register("traceur@0.0.33/src/codegeneration/PureES6Transformer", [], function() {
+  "use strict";
+  var __moduleName = "traceur@0.0.33/src/codegeneration/PureES6Transformer";
+  var AnnotationsTransformer = System.get("traceur@0.0.33/src/codegeneration/AnnotationsTransformer").AnnotationsTransformer;
+  var FreeVariableChecker = System.get("traceur@0.0.33/src/semantics/FreeVariableChecker").FreeVariableChecker;
+  var MultiTransformer = System.get("traceur@0.0.33/src/codegeneration/MultiTransformer").MultiTransformer;
+  var TypeTransformer = System.get("traceur@0.0.33/src/codegeneration/TypeTransformer").TypeTransformer;
+  var UniqueIdentifierGenerator = System.get("traceur@0.0.33/src/codegeneration/UniqueIdentifierGenerator").UniqueIdentifierGenerator;
+  var $__336 = System.get("traceur@0.0.33/src/options"),
+      options = $__336.options,
+      transformOptions = $__336.transformOptions;
+  var PureES6Transformer = function PureES6Transformer(reporter) {
+    var idGenerator = arguments[1] !== (void 0) ? arguments[1] : new UniqueIdentifierGenerator();
+    var $__334 = this;
+    $traceurRuntime.superCall(this, $PureES6Transformer.prototype, "constructor", [reporter, options.validate]);
+    var append = (function(transformer) {
+      $__334.append((function(tree) {
+        return new transformer(idGenerator, reporter).transformAny(tree);
+      }));
+    });
+    append(AnnotationsTransformer);
+    append(TypeTransformer);
+    if (options.freeVariableChecker) {
+      this.append((function(tree) {
+        FreeVariableChecker.checkScript(reporter, tree);
+        return tree;
+      }));
+    }
+  };
+  var $PureES6Transformer = PureES6Transformer;
+  ($traceurRuntime.createClass)(PureES6Transformer, {}, {}, MultiTransformer);
+  return {get PureES6Transformer() {
+      return PureES6Transformer;
+    }};
+});
 System.register("traceur@0.0.33/src/codegeneration/module/createModuleEvaluationStatement", [], function() {
   "use strict";
   var __moduleName = "traceur@0.0.33/src/codegeneration/module/createModuleEvaluationStatement";
-  var $__334 = Object.freeze(Object.defineProperties(["System.get(", " +'')"], {raw: {value: Object.freeze(["System.get(", " +'')"])}}));
+  var $__337 = Object.freeze(Object.defineProperties(["System.get(", " +'')"], {raw: {value: Object.freeze(["System.get(", " +'')"])}}));
   var parseStatement = System.get("traceur@0.0.33/src/codegeneration/PlaceholderParser").parseStatement;
   function createModuleEvaluationStatement(normalizedName) {
-    return parseStatement($__334, normalizedName);
+    return parseStatement($__337, normalizedName);
   }
   return {get createModuleEvaluationStatement() {
       return createModuleEvaluationStatement;
@@ -21618,18 +21653,18 @@ System.register("traceur@0.0.33/src/runtime/TraceurLoader", [], function() {
   var $TraceurLoader = TraceurLoader;
   ($traceurRuntime.createClass)(TraceurLoader, {
     loadAsScript: function(name) {
-      var $__337 = arguments[1] !== (void 0) ? arguments[1] : {},
-          referrerName = $__337.referrerName,
-          address = $__337.address;
+      var $__340 = arguments[1] !== (void 0) ? arguments[1] : {},
+          referrerName = $__340.referrerName,
+          address = $__340.address;
       return this.internalLoader_.load(name, referrerName, address, 'script').then((function(codeUnit) {
         return codeUnit.result;
       }));
     },
     script: function(source) {
-      var $__337 = arguments[1] !== (void 0) ? arguments[1] : {},
-          name = $__337.name,
-          referrerName = $__337.referrerName,
-          address = $__337.address;
+      var $__340 = arguments[1] !== (void 0) ? arguments[1] : {},
+          name = $__340.name,
+          referrerName = $__340.referrerName,
+          address = $__340.address;
       return this.internalLoader_.script(source, name, referrerName, address);
     },
     semVerRegExp_: function() {
@@ -21707,9 +21742,9 @@ System.register("traceur@0.0.33/src/runtime/System", [], function() {
 System.register("traceur@0.0.33/src/util/TestErrorReporter", [], function() {
   "use strict";
   var __moduleName = "traceur@0.0.33/src/util/TestErrorReporter";
-  var $__340 = System.get("traceur@0.0.33/src/util/ErrorReporter"),
-      ErrorReporter = $__340.ErrorReporter,
-      format = $__340.format;
+  var $__343 = System.get("traceur@0.0.33/src/util/ErrorReporter"),
+      ErrorReporter = $__343.ErrorReporter,
+      format = $__343.format;
   var TestErrorReporter = function TestErrorReporter() {
     this.errors = [];
   };
@@ -21785,6 +21820,7 @@ System.register("traceur@0.0.33/src/traceur", [], function() {
   var CommonJsModuleTransformer = System.get("traceur@0.0.33/src/codegeneration/CommonJsModuleTransformer").CommonJsModuleTransformer;
   var DirectExportVisitor = System.get("traceur@0.0.33/src/codegeneration/module/DirectExportVisitor").DirectExportVisitor;
   var FromOptionsTransformer = System.get("traceur@0.0.33/src/codegeneration/FromOptionsTransformer").FromOptionsTransformer;
+  var PureES6Transformer = System.get("traceur@0.0.33/src/codegeneration/PureES6Transformer").PureES6Transformer;
   var InlineModuleTransformer = System.get("traceur@0.0.33/src/codegeneration/InlineModuleTransformer").InlineModuleTransformer;
   var ModuleSpecifierVisitor = System.get("traceur@0.0.33/src/codegeneration/module/ModuleSpecifierVisitor").ModuleSpecifierVisitor;
   var ModuleTransformer = System.get("traceur@0.0.33/src/codegeneration/ModuleTransformer").ModuleTransformer;
@@ -21796,6 +21832,7 @@ System.register("traceur@0.0.33/src/traceur", [], function() {
     CloneTreeTransformer: CloneTreeTransformer,
     CommonJsModuleTransformer: CommonJsModuleTransformer,
     FromOptionsTransformer: FromOptionsTransformer,
+    PureES6Transformer: PureES6Transformer,
     InlineModuleTransformer: InlineModuleTransformer,
     ModuleTransformer: ModuleTransformer,
     ParseTreeFactory: ParseTreeFactory,
