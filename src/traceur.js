@@ -45,13 +45,41 @@ import {Parser} from './syntax/Parser';
 import {Scanner} from './syntax/Scanner';
 import {Script} from './syntax/trees/ParseTrees';
 import {SourceFile} from './syntax/SourceFile';
+import {CONSTRUCTOR, FROM} from './syntax/PredefinedName';
+import {Token} from './syntax/Token';
+import {EQUAL_EQUAL_EQUAL, OPEN_PAREN, CLOSE_PAREN, IMPORT, SEMI_COLON, STAR, OPEN_CURLY, CLOSE_CURLY, COMMA, AT} from './syntax/TokenType';
+import {PROPERTY_METHOD_ASSIGNMENT, MEMBER_EXPRESSION, THIS_EXPRESSION} from './syntax/trees/ParseTreeType';
+import {ParseTree} from './syntax/trees/ParseTree';
 
 export var syntax = {
+  PredefinedName: {
+    CONSTRUCTOR,
+    FROM
+  },
+  Token,
+  TokenType: {
+    EQUAL_EQUAL_EQUAL,
+    OPEN_PAREN,
+    CLOSE_PAREN,
+    IMPORT,
+    SEMI_COLON,
+    STAR,
+    OPEN_CURLY,
+    CLOSE_CURLY,
+    COMMA,
+    AT
+  },
   Parser,
   Scanner,
   SourceFile,
   trees: {
-    Script
+    ParseTree,
+    Script,
+    ParseTreeType: {
+      PROPERTY_METHOD_ASSIGNMENT: PROPERTY_METHOD_ASSIGNMENT,
+      MEMBER_EXPRESSION: MEMBER_EXPRESSION,
+      THIS_EXPRESSION: THIS_EXPRESSION
+    },
   }
 };
 
@@ -77,8 +105,19 @@ import {FromOptionsTransformer} from './codegeneration/FromOptionsTransformer';
 import {PureES6Transformer} from './codegeneration/PureES6Transformer';
 import {createModuleEvaluationStatement} from './codegeneration/module/createModuleEvaluationStatement';
 import {parseExpression, parseModule, parseScript, parseStatement} from './codegeneration/PlaceholderParser';
+import {ParseTreeTransformer} from './codegeneration/ParseTreeTransformer';
+import {createVariableStatement, createCallExpression, createIdentifierExpression, createArgumentList} from './codegeneration/ParseTreeFactory';
+import {MultiTransformer} from './codegeneration/MultiTransformer';
 
 export var codegeneration = {
+  ParseTreeTransformer,
+  ParseTreeFactory: {
+    createVariableStatement: createVariableStatement,
+    createCallExpression: createCallExpression,
+    createIdentifierExpression: createIdentifierExpression,
+    createArgumentList: createArgumentList
+  },
+  MultiTransformer,
   CloneTreeTransformer,
   FromOptionsTransformer,
   PureES6Transformer,
@@ -102,4 +141,10 @@ export var runtime = {
   Loader,
   LoaderCompiler,
   TraceurLoader
+};
+
+import {propName} from './staticsemantics/PropName';
+
+export var staticsemantics = {
+  propName
 };
