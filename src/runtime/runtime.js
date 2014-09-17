@@ -31,9 +31,12 @@
   var $freeze = $Object.freeze;
   var $getOwnPropertyDescriptor = $Object.getOwnPropertyDescriptor;
   var $getOwnPropertyNames = $Object.getOwnPropertyNames;
-  var $getPrototypeOf = $Object.getPrototypeOf;
+  var $keys = $Object.keys;
   var $hasOwnProperty = $Object.prototype.hasOwnProperty;
   var $toString = $Object.prototype.toString;
+  var $preventExtensions = Object.preventExtensions;
+  var $seal = Object.seal;
+  var $isExtensible = Object.isExtensible;
 
   function nonEnum(value) {
     return {
@@ -87,6 +90,16 @@
   // All symbol values are kept in this map. This is so that we can get back to
   // the symbol object if all we have is the string key representing the symbol.
   var symbolValues = $create(null);
+
+  // Private names are a bit simpler than Symbol since it is not supposed to be
+  // exposed to user code.
+  var privateNames = $create(null);
+
+  function createPrivateName() {
+    var s = newUniqueString();
+    privateNames[s] = true;
+    return s;
+  }
 
   function isSymbol(symbol) {
     return typeof symbol === 'object' && symbol instanceof SymbolValue;
@@ -143,7 +156,7 @@
     $defineProperty(this, symbolDataProperty, {value: this});
     $defineProperty(this, symbolInternalProperty, {value: key});
     $defineProperty(this, symbolDescriptionProperty, {value: description});
-    $freeze(this);
+    freeze(this);
     symbolValues[key] = this;
   }
   $defineProperty(SymbolValue.prototype, 'constructor', nonEnum(Symbol));
@@ -155,9 +168,59 @@
     value: Symbol.prototype.valueOf,
     enumerable: false
   });
-  $freeze(SymbolValue.prototype);
+
+  var hashProperty = createPrivateName();
+
+  // cached objects to avoid allocation of new object in defineHashObject
+  var hashPropertyDescriptor = {
+    value: undefined
+  };
+  var hashObjectProperties = {
+    hash: {
+      value: undefined
+    },
+    self: {
+      value: undefined
+    }
+  };
+
+  var hashCounter = 0;
+  function getOwnHashObject(object) {
+    var hashObject = object[hashProperty];
+    // Make sure we got the own property
+    if (hashObject && hashObject.self === object)
+      return hashObject;
+
+    if ($isExtensible(object)) {
+      hashObjectProperties.hash.value = hashCounter++;
+      hashObjectProperties.self.value = object;
+
+      hashPropertyDescriptor.value = $create(null, hashObjectProperties);
+
+      $defineProperty(object, hashProperty, hashPropertyDescriptor);
+      return hashPropertyDescriptor.value;
+    }
+
+    return undefined;
+  }
+
+  function freeze(object) {
+    getOwnHashObject(object);
+    return $freeze.apply(this, arguments);
+  }
+
+  function preventExtensions(object) {
+    getOwnHashObject(object);
+    return $preventExtensions.apply(this, arguments);
+  }
+
+  function seal(object) {
+    getOwnHashObject(object);
+    return $seal.apply(this, arguments);
+  }
 
   Symbol.iterator = Symbol();
+  freeze(SymbolValue.prototype);
 
   function toProperty(name) {
     if (isSymbol(name))
@@ -171,7 +234,7 @@
     var names = $getOwnPropertyNames(object);
     for (var i = 0; i < names.length; i++) {
       var name = names[i];
-      if (!symbolValues[name])
+      if (!symbolValues[name] && !privateNames[name])
         rv.push(name);
     }
     return rv;
@@ -239,50 +302,23 @@
                     {value: getOwnPropertyDescriptor});
     $defineProperty(Object.prototype, 'hasOwnProperty',
                     {value: hasOwnProperty});
+    $defineProperty(Object, 'freeze',
+                    {value: freeze});
+    $defineProperty(Object, 'preventExtensions',
+                    {value: preventExtensions});
+    $defineProperty(Object, 'seal',
+                    {value: seal});
 
     Object.getOwnPropertySymbols = getOwnPropertySymbols;
-
-    // Object.is
-
-    // Unlike === this returns true for (NaN, NaN) and false for (0, -0).
-    function is(left, right) {
-      if (left === right)
-        return left !== 0 || 1 / left === 1 / right;
-      return left !== left && right !== right;
-    }
-
-    $defineProperty(Object, 'is', method(is));
-
-    // Object.assign (19.1.3.1)
-    function assign(target, source) {
-      var props = $getOwnPropertyNames(source);
-      var p, length = props.length;
-      for (p = 0; p < length; p++) {
-        target[props[p]] = source[props[p]];
-      }
-      return target;
-    }
-
-    $defineProperty(Object, 'assign', method(assign));
-
-    // Object.mixin (19.1.3.15)
-    function mixin(target, source) {
-      var props = $getOwnPropertyNames(source);
-      var p, descriptor, length = props.length;
-      for (p = 0; p < length; p++) {
-        descriptor = $getOwnPropertyDescriptor(source, props[p]);
-        $defineProperty(target, props[p], descriptor);
-      }
-      return target;
-    }
-
-    $defineProperty(Object, 'mixin', method(mixin));
   }
 
   function exportStar(object) {
     for (var i = 1; i < arguments.length; i++) {
       var names = $getOwnPropertyNames(arguments[i]);
       for (var j = 0; j < names.length; j++) {
+        var name = names[j];
+        if (privateNames[name])
+          continue;
         (function(mod, name) {
           $defineProperty(object, name, {
             get: function() { return mod[name]; },
@@ -294,273 +330,29 @@
     return object;
   }
 
-  function toObject(value) {
-    if (value == null)
+  function isObject(x) {
+    return x != null && (typeof x === 'object' || typeof x === 'function');
+  }
+
+  function toObject(x) {
+    if (x == null)
       throw $TypeError();
-    return $Object(value);
+    return $Object(x);
   }
 
-  function spread() {
-    var rv = [], k = 0;
-    for (var i = 0; i < arguments.length; i++) {
-      var valueToSpread = toObject(arguments[i]);
-      for (var j = 0; j < valueToSpread.length; j++) {
-        rv[k++] = valueToSpread[j];
-      }
+  // http://people.mozilla.org/~jorendorff/es6-draft.html#sec-checkobjectcoercible
+  function checkObjectCoercible(argument) {
+    if (argument == null) {
+      throw new TypeError('Value cannot be converted to an Object');
     }
-    return rv;
-  }
-
-  function getPropertyDescriptor(object, name) {
-    while (object !== null) {
-      var result = $getOwnPropertyDescriptor(object, name);
-      if (result)
-        return result;
-      object = $getPrototypeOf(object);
-    }
-    return undefined;
-  }
-
-  function superDescriptor(homeObject, name) {
-    var proto = $getPrototypeOf(homeObject);
-    if (!proto)
-      throw $TypeError('super is null');
-    return getPropertyDescriptor(proto, name);
-  }
-
-  function superCall(self, homeObject, name, args) {
-    var descriptor = superDescriptor(homeObject, name);
-    if (descriptor) {
-      if ('value' in descriptor)
-        return descriptor.value.apply(self, args);
-      if (descriptor.get)
-        return descriptor.get.call(self).apply(self, args);
-    }
-    throw $TypeError("super has no method '" + name + "'.");
-  }
-
-  function superGet(self, homeObject, name) {
-    var descriptor = superDescriptor(homeObject, name);
-    if (descriptor) {
-      if (descriptor.get)
-        return descriptor.get.call(self);
-      else if ('value' in descriptor)
-        return descriptor.value;
-    }
-    return undefined;
-  }
-
-  function superSet(self, homeObject, name, value) {
-    var descriptor = superDescriptor(homeObject, name);
-    if (descriptor && descriptor.set) {
-      descriptor.set.call(self, value);
-      return;
-    }
-    throw $TypeError("super has no setter '" + name + "'.");
-  }
-
-  function getDescriptors(object) {
-    var descriptors = {}, name, names = $getOwnPropertyNames(object);
-    for (var i = 0; i < names.length; i++) {
-      var name = names[i];
-      descriptors[name] = $getOwnPropertyDescriptor(object, name);
-    }
-    return descriptors;
-  }
-
-  // The next three functions are more or less identical to
-  // ClassDefinitionEvaluation in the ES6 draft.
-
-  function createClass(ctor, object, staticObject, superClass) {
-    $defineProperty(object, 'constructor', {
-      value: ctor,
-       configurable: true,
-       enumerable: false,
-       writable: true
-    });
-
-    if (arguments.length > 3) {
-      if (typeof superClass === 'function')
-        ctor.__proto__ = superClass;
-      ctor.prototype = $create(getProtoParent(superClass),
-                               getDescriptors(object));
-    } else {
-      ctor.prototype = object;
-    }
-    $defineProperty(ctor, 'prototype', {configurable: false, writable: false});
-    return $defineProperties(ctor, getDescriptors(staticObject));
-  }
-
-  function getProtoParent(superClass) {
-    if (typeof superClass === 'function') {
-      var prototype = superClass.prototype;
-      if ($Object(prototype) === prototype || prototype === null)
-        return superClass.prototype;
-    }
-    if (superClass === null)
-      return null;
-    throw new TypeError();
-  }
-
-  function defaultSuperCall(self, homeObject, args) {
-    if ($getPrototypeOf(homeObject) !== null)
-      superCall(self, homeObject, 'constructor', args);
-  }
-
-  // Generator states. Terminology roughly matches that of
-  //   http://wiki.ecmascript.org/doku.php?id=harmony:generators
-  // Since 'state' is already taken, use 'GState' instead to denote what's
-  // referred to as "G.[[State]]" on that page.
-  var ST_NEWBORN = 0;
-  var ST_EXECUTING = 1;
-  var ST_SUSPENDED = 2;
-  var ST_CLOSED = 3;
-
-  var END_STATE = -3;
-
-  function addIterator(object) {
-    // This needs the non native defineProperty to handle symbols correctly.
-    return defineProperty(object, Symbol.iterator, nonEnum(function() {
-      return this;
-    }));
-  }
-
-  function GeneratorContext() {
-    this.state = 0;
-    this.GState = ST_NEWBORN;
-    this.storedException = undefined;
-    this.finallyFallThrough = undefined;
-    this.sent = undefined;
-    this.returnValue = undefined;
-    this.tryStack_ = [];
-  }
-  GeneratorContext.prototype = {
-    pushTry: function(catchState, finallyState) {
-      if (finallyState !== null) {
-        var finallyFallThrough = null;
-        for (var i = this.tryStack_.length - 1; i >= 0; i--) {
-          if (this.tryStack_[i].catch !== undefined) {
-            finallyFallThrough = this.tryStack_[i].catch;
-            break;
-          }
-        }
-        if (finallyFallThrough === null)
-          finallyFallThrough = -3;
-
-        this.tryStack_.push({
-          finally: finallyState,
-          finallyFallThrough: finallyFallThrough
-        });
-      }
-
-      if (catchState !== null) {
-        this.tryStack_.push({catch: catchState});
-      }
-    },
-    popTry: function() {
-      this.tryStack_.pop();
-    }
-  };
-
-  function getNextOrThrow(ctx, moveNext, action) {
-    return function(x) {
-      switch (ctx.GState) {
-        case ST_EXECUTING:
-          throw new Error(`"${action}" on executing generator`);
-
-        case ST_CLOSED:
-          throw new Error(`"${action}" on closed generator`);
-
-        case ST_NEWBORN:
-          if (action === 'throw') {
-            ctx.GState = ST_CLOSED;
-            throw x;
-          }
-          if (x !== undefined)
-            throw $TypeError('Sent value to newborn generator');
-          // fall through
-
-        case ST_SUSPENDED:
-          ctx.GState = ST_EXECUTING;
-          ctx.action = action;
-          ctx.sent = x;
-          var value = moveNext(ctx);
-          var done = value === ctx;
-          if (done)
-            value = ctx.returnValue;
-          ctx.GState = done ? ST_CLOSED : ST_SUSPENDED;
-          return {value: value, done: done};
-      }
-    };
-  }
-
-  function generatorWrap(innerFunction, self) {
-    var moveNext = getMoveNext(innerFunction, self);
-    var ctx = new GeneratorContext();
-    return addIterator({
-      next: getNextOrThrow(ctx, moveNext, 'next'),
-      throw: getNextOrThrow(ctx, moveNext, 'throw'),
-    });
-  }
-
-  function AsyncFunctionContext() {
-    GeneratorContext.call(this);
-    this.err = undefined;
-    var ctx = this;
-    ctx.result = new Promise(function(resolve, reject) {
-      ctx.resolve = resolve;
-      ctx.reject = reject;
-    });
-  }
-  AsyncFunctionContext.prototype = Object.create(GeneratorContext.prototype);
-
-  function asyncWrap(innerFunction, self) {
-    var moveNext = getMoveNext(innerFunction, self);
-    var ctx = new AsyncFunctionContext();
-    ctx.createCallback = function(newState) {
-      return function (value) {
-        ctx.state = newState;
-        ctx.value = value;
-        moveNext(ctx);
-      };
-    }
-    ctx.createErrback = function(newState) {
-      return function (err) {
-        ctx.state = newState;
-        ctx.err = err;
-        moveNext(ctx);
-      };
-    };
-
-    moveNext(ctx);
-    return ctx.result;
-  }
-
-  function getMoveNext(innerFunction, self) {
-    return function(ctx) {
-      while (true) {
-        try {
-          return innerFunction.call(self, ctx);
-        } catch (ex) {
-          ctx.storedException = ex;
-          var last = ctx.tryStack_[ctx.tryStack_.length - 1];
-          if (!last) {
-            ctx.GState = ST_CLOSED;
-            ctx.state = END_STATE;
-            throw ex;
-          }
-
-          ctx.state = last.catch !== undefined ? last.catch : last.finally;
-
-          if (last.finallyFallThrough !== undefined)
-            ctx.finallyFallThrough = last.finallyFallThrough;
-        }
-      }
-    };
+    return argument;
   }
 
   function setupGlobals(global) {
     global.Symbol = Symbol;
+
+    global.Reflect = global.Reflect || {};
+    global.Reflect.global = global.Reflect.global || global;
 
     polyfillObject(global.Object);
   }
@@ -568,21 +360,28 @@
   setupGlobals(global);
 
   global.$traceurRuntime = {
-    asyncWrap: asyncWrap,
-    createClass: createClass,
-    defaultSuperCall: defaultSuperCall,
+    createPrivateName: createPrivateName,
     exportStar: exportStar,
-    generatorWrap: generatorWrap,
+    getOwnHashObject: getOwnHashObject,
+    privateNames: privateNames,
     setProperty: setProperty,
     setupGlobals: setupGlobals,
-    spread: spread,
-    superCall: superCall,
-    superGet: superGet,
-    superSet: superSet,
     toObject: toObject,
+    isObject: isObject,
     toProperty: toProperty,
     type: types,
     typeof: typeOf,
+    checkObjectCoercible: checkObjectCoercible,
+    hasOwnProperty: function (o, p) {
+      return hasOwnProperty.call(o, p);
+    },
+
+    // TODO(arv): Remove these once the symbol overrides have been extracted.
+    defineProperties: $defineProperties,
+    defineProperty: $defineProperty,
+    getOwnPropertyDescriptor: $getOwnPropertyDescriptor,
+    getOwnPropertyNames: $getOwnPropertyNames,
+    keys: $keys,
   };
 
 })(typeof global !== 'undefined' ? global : this);

@@ -72,7 +72,7 @@ class StringParser {
   }
 
   parseEscapeSequence() {
-    var ch = this.next();
+    var ch = this.next().value;
     switch (ch) {
       case '\n':  // <LF>
       case '\r':  // <CR>
@@ -95,11 +95,26 @@ class StringParser {
         return '\v';
       case 'x':
         // 2 hex digits
-        return String.fromCharCode(parseInt(this.next() + this.next(), 16));
+        return String.fromCharCode(parseInt(this.next().value + this.next().value, 16));
       case 'u':
+        var nextValue = this.next().value;
+        if (nextValue === '{') {
+          var hexDigits = '';
+          while ((nextValue = this.next().value) !== '}') {
+            hexDigits += nextValue;
+          }
+          var codePoint = parseInt(hexDigits, 16);
+          if (codePoint <= 0xFFFF) {
+            return String.fromCharCode(codePoint);
+          }
+          var high = Math.floor((codePoint - 0x10000) / 0x400) + 0xD800;
+          var low = (codePoint - 0x10000) % 0x400 + 0xDC00;
+          return String.fromCharCode(high, low);
+        }
         // 4 hex digits
-        return String.fromCharCode(parseInt(this.next() + this.next() +
-                                            this.next() + this.next(), 16));
+        return String.fromCharCode(parseInt(nextValue + this.next().value +
+                                            this.next().value + this.next().value, 16));
+
       default:
         if (Number(ch) < 8)
           throw new Error('Octal literals are not supported');

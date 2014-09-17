@@ -12,27 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import globalThis from '../codegeneration/globalThis';
 import {ErrorReporter} from '../util/ErrorReporter';
 import {TraceurLoader} from '../runtime/TraceurLoader';
-import {LoaderHooks} from './LoaderHooks';
-import {options} from '../options';
+import {LoaderCompiler} from './LoaderCompiler';
 import {webLoader} from './webLoader';
 
 var url;
 var fileLoader;
 if (typeof window !== 'undefined' && window.location) {
-	url = window.location.href;
-	fileLoader = webLoader;
-} // else the node app will override System.
+  url = window.location.href;
+  fileLoader = webLoader;
+}
 
-var loaderHooks = new LoaderHooks(new ErrorReporter(), url, fileLoader);
-export var System = new TraceurLoader(loaderHooks);
+var traceurLoader = new TraceurLoader(fileLoader, url);
 
-if (typeof window !== 'undefined')
-	window.System = System;
-if (typeof global !== 'undefined')
-	global.System = System;
+Reflect.global.System = traceurLoader;
 
-System.map = System.semverMap(__moduleName);
+export { traceurLoader as System }
 
+traceurLoader.map = traceurLoader.semverMap(__moduleName);

@@ -13,8 +13,10 @@
 // limitations under the License.
 
 import {ModuleTransformer} from './ModuleTransformer';
-import {VAR} from '../syntax/TokenType';
-import {createBindingIdentifier} from './ParseTreeFactory';
+import {
+  createBindingIdentifier,
+  createIdentifierExpression
+} from './ParseTreeFactory';
 import globalThis from './globalThis';
 import {
   parseExpression,
@@ -35,8 +37,19 @@ export class AmdTransformer extends ModuleTransformer {
     var properties = super();
 
     if (this.exportVisitor_.hasExports())
-      properties.push(parsePropertyDefinition `__transpiledModule: true`);
+      properties.push(parsePropertyDefinition `__esModule: true`);
     return properties;
+  }
+
+  moduleProlog() {
+    // insert the default handling after the "use strict" and __moduleName lines
+    var locals = this.dependencies.map((dep) => {
+      var local = createIdentifierExpression(dep.local);
+      return parseStatement
+          `if (!${local} || !${local}.__esModule)
+            ${local} = {default: ${local}}`;
+    });
+    return super().concat(locals);
   }
 
   wrapModule(statements) {
@@ -52,12 +65,17 @@ export class AmdTransformer extends ModuleTransformer {
     if (hasTopLevelThis)
       func = parseExpression `${func}.bind(${globalThis()})`;
 
-    return parseStatements `define(${depPaths}, ${func});`;
+    if (this.moduleName) {
+      return parseStatements `define(${this.moduleName}, ${depPaths}, ${func});`;
+    }
+    else {
+      return parseStatements `define(${depPaths}, ${func});`;
+    }
   }
 
   transformModuleSpecifier(tree) {
     var localName = this.getTempIdentifier();
     this.dependencies.push({path: tree.token, local: localName});
-    return createBindingIdentifier(localName);
+    return createIdentifierExpression(localName);
   }
 }

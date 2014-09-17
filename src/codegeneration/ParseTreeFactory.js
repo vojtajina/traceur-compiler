@@ -19,15 +19,12 @@ import {
   ParseTreeType
 } from '../syntax/trees/ParseTree';
 import {
-  BIND,
   CALL,
   CREATE,
   DEFINE_PROPERTY,
   FREEZE,
   OBJECT,
-  PREVENT_EXTENSIONS,
-  UNDEFINED,
-  getParameterName
+  UNDEFINED
 } from '../syntax/PredefinedName';
 import {Token} from '../syntax/Token';
 import {
@@ -43,13 +40,8 @@ import {assert} from '../util/assert';
 
 import {
   ArgumentList,
-  ArrayComprehension,
   ArrayLiteralExpression,
-  ArrayPattern,
-  ArrowFunctionExpression,
-  AwaitStatement,
-  BinaryOperator,
-  BindingElement,
+  BinaryExpression,
   BindingIdentifier,
   Block,
   BreakStatement,
@@ -57,75 +49,40 @@ import {
   CaseClause,
   Catch,
   ClassDeclaration,
-  ClassExpression,
   CommaExpression,
-  ComprehensionFor,
-  ComprehensionIf,
-  ComputedPropertyName,
   ConditionalExpression,
   ContinueStatement,
-  CoverFormals,
-  CoverInitialisedName,
-  DebuggerStatement,
   DefaultClause,
   DoWhileStatement,
   EmptyStatement,
-  ExportDeclaration,
-  ExportSpecifier,
-  ExportSpecifierSet,
-  ExportStar,
   ExpressionStatement,
   Finally,
   ForInStatement,
   ForOfStatement,
   ForStatement,
-  FormalParameter,
   FormalParameterList,
   FunctionBody,
-  FunctionDeclaration,
   FunctionExpression,
-  GeneratorComprehension,
-  GetAccessor,
   IdentifierExpression,
   IfStatement,
-  ImportDeclaration,
-  ImportSpecifier,
-  ImportSpecifierSet,
-  LabelledStatement,
+  ImportedBinding,
   LiteralExpression,
   LiteralPropertyName,
   MemberExpression,
   MemberLookupExpression,
-  Module,
-  ModuleDeclaration,
-  ModuleSpecifier,
-  NamedExport,
   NewExpression,
   ObjectLiteralExpression,
-  ObjectPattern,
-  ObjectPatternField,
   ParenExpression,
   PostfixExpression,
-  PredefinedType,
   Script,
-  PropertyMethodAssignment,
   PropertyNameAssignment,
-  PropertyNameShorthand,
   RestParameter,
   ReturnStatement,
-  SetAccessor,
   SpreadExpression,
-  SpreadPatternElement,
-  SuperExpression,
   SwitchStatement,
-  SyntaxErrorTree,
-  TemplateLiteralExpression,
-  TemplateLiteralPortion,
-  TemplateSubstitution,
   ThisExpression,
   ThrowStatement,
   TryStatement,
-  TypeName,
   UnaryExpression,
   VariableDeclaration,
   VariableDeclarationList,
@@ -157,15 +114,6 @@ export function createIdentifierToken(identifier) {
   return new IdentifierToken(null, identifier);
 }
 
-/**
- * @param {string} name
- * @return {Token}
- */
-export function createPropertyNameToken(name) {
-  // TODO: properties with non identifier names
-  return createIdentifierToken(name);
-}
-
 export function createStringLiteralToken(value) {
   return new LiteralToken(STRING, JSON.stringify(value), null);
 }
@@ -178,125 +126,11 @@ export function createNullLiteralToken() {
   return new LiteralToken(NULL, 'null', null);
 }
 
-
 export function createNumberLiteralToken(value) {
   return new LiteralToken(NUMBER, String(value), null);
 }
 
-// Token lists
-
-/**
- * @return {Array.<string>}
- */
-export function createEmptyParameters() {
-  return [];
-}
-
-/**
- * Either creates an array from the arguments, or if the first argument is an
- * array, creates a new array with its elements followed by the other
- * arguments.
- *
- * TODO(jmesserly): this API is a bit goofy. Can we replace it with something
- * simpler? In most use cases, square brackets could replace calls to this.
- *
- * @param {Array.<ParseTree>|ParseTree} statementsOrHead
- * @param {...ParseTree} args
- * @return {Array.<ParseTree>}
- */
-export function createStatementList(statementsOrHead, ...args) {
-  if (statementsOrHead instanceof Array)
-    return [...statementsOrHead, ...args];
-  return slice(arguments);
-}
-
-/**
- * @param {string|IdentifierToken|IdentifierExpression|BindingIdentifier}
- *           identifier
- * @return {BindingElement}
- */
-export function createBindingElement(arg) {
-  var binding = createBindingIdentifier(arg);
-  return new BindingElement(null, binding, null);
-}
-
-/**
- * @param {string|IdentifierToken|IdentifierExpression|BindingIdentifier}
- *           identifier
- * @return {FormalParameter}
- */
-export function createFormalParameter(arg) {
-  return new FormalParameter(null, createBindingElement(arg), null, []);
-}
-
-/**
- * TODO(arv): Make this less overloaded.
- *
- * @param {string|number|IdentifierToken|Array.<string>} arg0
- * @param {...string} var_args
- * @return {FormalParameterList}
- */
-export function createParameterList(arg0, var_args) {
-  if (typeof arg0 == 'string') {
-    // var_args of strings
-    var parameterList = map(arguments, createFormalParameter);
-    return new FormalParameterList(null, parameterList);
-  }
-
-  if (typeof arg0 == 'number')
-    return createParameterListHelper(arg0, false);
-
-  if (arg0 instanceof IdentifierToken) {
-    return new FormalParameterList(
-        null, [createFormalParameter(arg0)]);
-  }
-
-  // Array.<string>
-  var builder = arg0.map(createFormalParameter);
-  return new FormalParameterList(null, builder);
-}
-
-/**
- * Helper for building parameter lists with and without rest params.
- * @param {number} numberOfParameters
- * @param {boolean} hasRestParams
- * @return {FormalParameterList}
- */
-function createParameterListHelper(numberOfParameters, hasRestParams) {
-  var builder = [];
-
-  for (var index = 0; index < numberOfParameters; index++) {
-    var parameterName = getParameterName(index);
-    var isRestParameter = index == numberOfParameters - 1 && hasRestParams;
-    builder.push(
-        isRestParameter ?
-            new FormalParameter(null, createRestParameter(parameterName), null, []) :
-            createFormalParameter(parameterName));
-  }
-
-  return new FormalParameterList(null, builder);
-}
-
-/**
- * @param {number} numberOfParameters
- * @return {FormalParameterList}
- */
-export function createParameterListWithRestParams(numberOfParameters) {
-  return createParameterListHelper(numberOfParameters, true);
-}
-
-/**
- * Creates an expression that refers to the {@code index}-th
- * parameter by its predefined name.
- *
- * @see PredefinedName#getParameterName
- *
- * @param {number} index
- * @return {IdentifierExpression}
- */
-export function createParameterReference(index) {
-  return createIdentifierExpression(getParameterName(index));
-}
+// Trees
 
 /**
  * @return {FormalParameterList}
@@ -305,59 +139,19 @@ export function createEmptyParameterList() {
   return new FormalParameterList(null, []);
 }
 
-// Tree Lists
-
-export function createEmptyList() {
-  // TODO(arv): Remove
-  return [];
-}
-
-// Trees
-
 /**
- * @param {Array.<ParseTree>|ParseTree|number} numberListOrFirst
- * @param {...ParseTree} var_args
+ * @param {Array.<ParseTree>} list
  * @return {ArgumentList}
  */
-export function createArgumentList(numberListOrFirst, var_args) {
-  if (typeof numberListOrFirst == 'number') {
-    return createArgumentListFromParameterList(
-        createParameterList(numberListOrFirst));
-  }
-
-  var list;
-  if (numberListOrFirst instanceof Array)
-    list = numberListOrFirst;
-  else
-    list = slice(arguments);
-
+export function createArgumentList(list) {
   return new ArgumentList(null, list);
-}
-
-/**
- * @param {FormalParameterList} formalParameterList
- * @return {ArgumentList}
- */
-export function createArgumentListFromParameterList(formalParameterList) {
-  var builder = formalParameterList.parameters.map(function(parameter) {
-    if (parameter.isRestParameter()) {
-      return createSpreadExpression(
-          createIdentifierExpression(
-              parameter.identifier));
-    } else {
-      // TODO: implement pattern -> array, object literal translation
-      return parameter;
-    }
-  });
-
-  return new ArgumentList(null, builder);
 }
 
 /**
  * @return {ArgumentList}
  */
 export function createEmptyArgumentList() {
-  return new ArgumentList(null, createEmptyList());
+  return createArgumentList([]);
 }
 
 /**
@@ -372,32 +166,24 @@ export function createArrayLiteralExpression(list) {
  * @return {ArrayLiteralExpression}
  */
 export function createEmptyArrayLiteralExpression() {
-  return createArrayLiteralExpression(createEmptyList());
-}
-
-/**
- * @param {Array.<ParseTree>} list
- * @return {ArrayPattern}
- */
-export function createArrayPattern(list) {
-  return new ArrayPattern(null, list);
+  return createArrayLiteralExpression([]);
 }
 
 /**
  * @param {ParseTree} lhs
  * @param {ParseTree} rhs
- * @return {BinaryOperator}
+ * @return {BinaryExpression}
  */
 export function createAssignmentExpression(lhs, rhs) {
-  return new BinaryOperator(null, lhs,
+  return new BinaryExpression(null, lhs,
       createOperatorToken(EQUAL), rhs);
 }
 
 /**
- * @return {BinaryOperator}
+ * @return {BinaryExpression}
  */
-export function createBinaryOperator(left, operator, right) {
-  return new BinaryOperator(null, left, operator, right);
+export function createBinaryExpression(left, operator, right) {
+  return new BinaryExpression(null, left, operator, right);
 }
 
 /**
@@ -416,6 +202,11 @@ export function createBindingIdentifier(identifier) {
   return new BindingIdentifier(null, identifier);
 }
 
+export function createImportedBinding(name) {
+  var bindingIdentifier = createBindingIdentifier(name);
+  return new ImportedBinding(bindingIdentifier.location, bindingIdentifier);
+}
+
 /**
  * @return {EmptyStatement}
  */
@@ -427,17 +218,14 @@ export function createEmptyStatement() {
  * @return {Block}
  */
 export function createEmptyBlock() {
-  return createBlock(createEmptyList());
+  return createBlock([]);
 }
 
 /**
- * @param {Array.<ParseTree>|ParseTree} statements
- * @param {...ParseTree} var_args
+ * @param {Array.<ParseTree>} statements
  * @return {Block}
  */
 export function createBlock(statements) {
-  if (statements instanceof ParseTree)
-    statements = slice(arguments);
   return new Block(null, statements);
 }
 
@@ -453,7 +241,7 @@ export function createFunctionBody(statements) {
  * @param {FunctionBody} body
  * @return {CallExpression}
  */
-export function createScopedExpression(body, scope = createThisExpression()) {
+export function createScopedExpression(body, scope) {
   assert(body.type === 'FUNCTION_BODY');
   return createCallCall(
       createParenExpression(
@@ -482,57 +270,21 @@ export function createCallExpression(operand,
 }
 
 /**
- * @param {ParseTree} func
- * @param {ParseTree} thisTree
- * @return {CallExpression}
- */
-export function createBoundCall(func, thisTree) {
-  return createCallExpression(
-      createMemberExpression(
-          func.type == ParseTreeType.FUNCTION_EXPRESSION ?
-              createParenExpression(func) :
-              func,
-          BIND),
-      createArgumentList(thisTree));
-}
-
-/**
  * @return {BreakStatement}
  */
 export function createBreakStatement(name = null) {
   return new BreakStatement(null, name);
 }
 
-// function.call(this, arguments)
 /**
  * @param {ParseTree} func
  * @param {ParseTree} thisExpression
- * @param {ParseTree|Array.<ParseTree>} args
- * @param {...ParseTree} var_args
  * @return {CallExpression}
  */
-export function createCallCall(func, thisExpression, args, var_args) {
-  if (args instanceof ParseTree)
-    args = slice(arguments, 2);
-
-  var builder = [thisExpression];
-  if (args)
-    builder.push(...args);
-
+function createCallCall(func, thisExpression) {
   return createCallExpression(
       createMemberExpression(func, CALL),
-      createArgumentList(builder));
-}
-
-/**
- * @param {ParseTree} func
- * @param {ParseTree} thisExpression
- * @param {...ParseTree} args
- * @return {ParseTree}
- */
-export function createCallCallStatement(func, thisExpression, ...args) {
-  return createExpressionStatement(
-      createCallCall(func, thisExpression, args));
+      createArgumentList([thisExpression]));
 }
 
 /**
@@ -641,23 +393,23 @@ export function createFinally(block) {
 }
 
 /**
- * @param {VariableDeclarationList} initialiser
+ * @param {VariableDeclarationList} initializer
  * @param {ParseTree} collection
  * @param {ParseTree} body
  * @return {ForOfStatement}
  */
-export function createForOfStatement(initialiser, collection, body) {
-  return new ForOfStatement(null, initialiser, collection, body);
+export function createForOfStatement(initializer, collection, body) {
+  return new ForOfStatement(null, initializer, collection, body);
 }
 
 /**
- * @param {ParseTree} initialiser
+ * @param {ParseTree} initializer
  * @param {ParseTree} collection
  * @param {ParseTree} body
  * @return {ForInStatement}
  */
-export function createForInStatement(initialiser, collection, body) {
-  return new ForInStatement(null, initialiser, collection, body);
+export function createForInStatement(initializer, collection, body) {
+  return new ForInStatement(null, initializer, collection, body);
 }
 
 /**
@@ -672,28 +424,16 @@ export function createForStatement(variables, condition, increment, body) {
 }
 
 /**
- * @param {FormalParameterList} formalParameterList
+ * @param {FormalParameterList} parameterList
  * @param {FunctionBody} body
  * @return {FunctionExpression}
  */
-export function createFunctionExpression(formalParameterList, body) {
+export function createFunctionExpression(parameterList, body) {
   assert(body.type === 'FUNCTION_BODY');
   return new FunctionExpression(null, null, false,
-                                formalParameterList, null, [], body);
+                                parameterList, null, [], body);
 }
 
-// get name () { ... }
-/**
- * @param {string|Token} name
- * @param {Block} body
- * @return {GetAccessor}
- */
-export function createGetAccessor(name, body) {
-  if (typeof name == 'string')
-    name = createPropertyNameToken(name);
-  var isStatic = false;
-  return new GetAccessor(null, isStatic, name, null, [], body);
-}
 
 /**
  * @param {string|IdentifierToken} identifier
@@ -722,15 +462,6 @@ export function createUndefinedExpression() {
  */
 export function createIfStatement(condition, ifClause, elseClause = null) {
   return new IfStatement(null, condition, ifClause, elseClause);
-}
-
-/**
- * @param {IdentifierToken} name
- * @param {ParseTree} statement
- * @return {LabelledStatement}
- */
-export function createLabelledStatement(name, statement) {
-  return new LabelledStatement(null, name, statement);
 }
 
 /**
@@ -812,16 +543,10 @@ export function createMemberLookupExpression(operand,  memberExpression) {
 }
 
 /**
- * Creates 'this' or 'this.memberName'.
- * @param {string=} memberName
  * @return {ParseTree}
  */
-export function createThisExpression(memberName = undefined) {
-  var result = new ThisExpression(null);
-  if (memberName) {
-    result = createMemberExpression(result, memberName);
-  }
-  return result;
+export function createThisExpression() {
+  return new ThisExpression(null);
 }
 
 /**
@@ -841,20 +566,9 @@ export function createObjectFreeze(value) {
   // Object.freeze(value)
   return createCallExpression(
       createMemberExpression(OBJECT, FREEZE),
-      createArgumentList(value));
+      createArgumentList([value]));
 }
 
-/**
- * @param {ParseTree} value
- * @return {ParseTree}
- */
-export function createObjectPreventExtensions(value) {
-  // Object.preventExtensions(value)
-  return createCallExpression(
-      createMemberExpression(OBJECT,
-                             PREVENT_EXTENSIONS),
-      createArgumentList(value));
-}
 
 /**
  * @param {ParseTree} protoExpression
@@ -878,7 +592,7 @@ export function createObjectCreate(protoExpression, descriptors) {
  *     may be true, false or a ParseTree.
  * @return {ObjectLiteralExpression}
  */
-export function createPropertyDescriptor(descr) {
+export function createObjectLiteral(descr) {
   var propertyNameAndValues = Object.keys(descr).map(function(name) {
     var value = descr[name];
     if (!(value instanceof ParseTree))
@@ -902,40 +616,20 @@ export function createDefineProperty(tree, name, descr) {
     name = createStringLiteral(name);
 
   return createCallExpression(
-    createMemberExpression(OBJECT,
-                           DEFINE_PROPERTY),
-    createArgumentList(tree,
+      createMemberExpression(OBJECT, DEFINE_PROPERTY),
+      createArgumentList([
+        tree,
         name,
-        createPropertyDescriptor(descr)));
+        createObjectLiteral(descr)
+      ]));
 }
 
 /**
- * @param {Array.<ParseTree>|ParseTree} propertyNameAndValues
- * @param {...ParseTree} var_args
+ * @param {Array.<ParseTree>} propertyNameAndValues
  * @return {ObjectLiteralExpression}
  */
 export function createObjectLiteralExpression(propertyNameAndValues) {
-  if (propertyNameAndValues instanceof ParseTree)
-    propertyNameAndValues = slice(arguments);
   return new ObjectLiteralExpression(null, propertyNameAndValues);
-}
-
-/**
- * @param {Array.<ParseTree>} list
- * @return {ObjectPattern}
- */
-export function createObjectPattern(list) {
-  return new ObjectPattern(null, list);
-}
-
-/**
- * @param {IdentifierToken} identifier
- * @param {ParseTree} element
- * @return {ObjectPatternField}
- */
-export function createObjectPatternField(identifier, element) {
-  identifier = createBindingIdentifier(identifier);
-  return new ObjectPatternField(null, identifier, element);
 }
 
 /**
@@ -978,7 +672,7 @@ export function createPropertyNameAssignment(identifier, value) {
  * @param {string} name
  * @return {LiteralPropertyName}
  */
-export function createLiteralPropertyName(name) {
+function createLiteralPropertyName(name) {
   return new LiteralPropertyName(null, createIdentifierToken(name));
 }
 
@@ -986,7 +680,7 @@ export function createLiteralPropertyName(name) {
  * @param {string|IdentifierToken|BindingIdentifier} identifier
  * @return {RestParameter}
  */
-export function createRestParameter(identifier) {
+function createRestParameter(identifier) {
   return new RestParameter(null, createBindingIdentifier(identifier));
 }
 
@@ -1000,43 +694,10 @@ export function createReturnStatement(expression) {
 
 /**
  * @param {ParseTree} expression
- * @param {boolean} isYieldFor
- * @return {ExpressionStatement}
- */
-export function createYieldStatement(expression, isYieldFor) {
-  return createExpressionStatement(new YieldExpression(null, expression,
-                                                       isYieldFor));
-}
-
-/**
- * @param {string|Token} name
- * @param {string|IdentifierToken} parameter
- * @param {Block} body
- * @return {SetAccessor}
- */
-export function createSetAccessor(name, parameter, body) {
-  if (typeof name == 'string')
-    name = createPropertyNameToken(name);
-  if (typeof parameter == 'string')
-    parameter = createIdentifierToken(parameter);
-  var isStatic = false;
-  return new SetAccessor(null, isStatic, name, parameter, [], body);
-}
-
-/**
- * @param {ParseTree} expression
  * @return {SpreadExpression}
  */
-export function createSpreadExpression(expression) {
+function createSpreadExpression(expression) {
   return new SpreadExpression(null, expression);
-}
-
-/**
- * @param {ParseTree} lvalue
- * @return {SpreadPatternElement}
- */
-export function createSpreadPatternElement(lvalue) {
-  return new SpreadPatternElement(null, lvalue);
 }
 
 /**
@@ -1085,12 +746,12 @@ export function createUseStrictDirective() {
 /**
  * @param {TokenType} binding
  * @param {IdentifierToken|Array.<VariableDeclaration>} identifierOrDeclarations
- * @param {ParseTree=} initialiser
+ * @param {ParseTree=} initializer
  * @return {VariableDeclarationList}
  */
 export function createVariableDeclarationList(binding,
                                               identifierOrDeclarations,
-                                              initialiser) {
+                                              initializer) {
   if (identifierOrDeclarations instanceof Array) {
     var declarations = identifierOrDeclarations;
     return new VariableDeclarationList(null, binding, declarations);
@@ -1098,15 +759,15 @@ export function createVariableDeclarationList(binding,
 
   var identifier = identifierOrDeclarations;
   return createVariableDeclarationList(
-      binding, [createVariableDeclaration(identifier, initialiser)]);
+      binding, [createVariableDeclaration(identifier, initializer)]);
 }
 
 /**
  * @param {string|IdentifierToken|ParseTree} identifier
- * @param {ParseTree} initialiser
+ * @param {ParseTree} initializer
  * @return {VariableDeclaration}
  */
-export function createVariableDeclaration(identifier, initialiser) {
+export function createVariableDeclaration(identifier, initializer) {
   if (!(identifier instanceof ParseTree) ||
       identifier.type !== ParseTreeType.BINDING_IDENTIFIER &&
       identifier.type !== ParseTreeType.OBJECT_PATTERN &&
@@ -1114,22 +775,22 @@ export function createVariableDeclaration(identifier, initialiser) {
     identifier = createBindingIdentifier(identifier);
   }
 
-  return new VariableDeclaration(null, identifier, null, initialiser);
+  return new VariableDeclaration(null, identifier, null, initializer);
 }
 
 /**
  * @param {VariableDeclarationList|TokenType} listOrBinding
  * @param {string|IdentifierToken=} identifier
- * @param {ParseTree=} initialiser
+ * @param {ParseTree=} initializer
  * @return {VariableStatement}
  */
 export function createVariableStatement(listOrBinding,
                                         identifier,
-                                        initialiser) {
+                                        initializer) {
   if (listOrBinding instanceof VariableDeclarationList)
     return new VariableStatement(null, listOrBinding);
   var binding = listOrBinding;
-  var list = createVariableDeclarationList(binding, identifier, initialiser);
+  var list = createVariableDeclarationList(binding, identifier, initializer);
   return createVariableStatement(list);
 }
 

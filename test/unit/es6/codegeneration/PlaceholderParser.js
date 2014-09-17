@@ -14,14 +14,23 @@
 
 suite('PlaceholderParser.traceur.js', function() {
 
-  var ParseTreeType =
-      $traceurRuntime.ModuleStore.getForTesting('src/syntax/trees/ParseTreeType');
-  var {parseExpression, parseStatement} =
-      $traceurRuntime.ModuleStore.getForTesting('src/codegeneration/PlaceholderParser');
-  var {write} = $traceurRuntime.ModuleStore.getForTesting('src/outputgeneration/TreeWriter');
+  function get(name) {
+    return $traceurRuntime.ModuleStore.getForTesting(name);
+  }
+
+  var ParseTreeType = get('src/syntax/trees/ParseTreeType');
+  var {
+    parseExpression,
+    parseModule,
+    parseScript,
+    parseStatement,
+    parseStatements
+  } = get('src/codegeneration/PlaceholderParser');
+  var {write} = get('src/outputgeneration/TreeWriter');
+  var {IdentifierToken} = get('src/syntax/IdentifierToken');
 
   test('ParseExpressionIdentifierExpression', function() {
-    var id = new traceur.syntax.IdentifierToken(null, 'x');
+    var id = new IdentifierToken(null, 'x');
     var tree = parseExpression `1 + ${id}`;
     assert.equal('1 + x', write(tree));
   });
@@ -70,7 +79,7 @@ suite('PlaceholderParser.traceur.js', function() {
   });
 
   test('ParseExpressionPropertyNameIdentifier', function() {
-    var id = new traceur.syntax.IdentifierToken(null, 'x');
+    var id = new IdentifierToken(null, 'x');
     var tree = parseExpression `{${id}: ${id}}`;
     assert.equal('{x: x}', write(tree));
   });
@@ -112,6 +121,49 @@ suite('PlaceholderParser.traceur.js', function() {
     assert.equal(ParseTreeType.BLOCK, blockTree.type);
     tree = parseExpression `function() { ${blockTree} }`;
     assert.equal('function() {}', write(tree));
+  });
+
+  test('ParseModuleExportDeclaration', function() {
+    var className = 'Foo';
+    var tree = parseModule `export default class ${className} {}`;
+    assert.equal('export default class Foo {}\n', write(tree));
+  });
+
+  test('ParseModuleExportDeclarationUsingParseStatement', function() {
+    var className = 'Foo';
+    var tree = parseStatement `export default class ${className} {}`;
+    assert.equal('export default class Foo {}', write(tree));
+  });
+
+  test('ParseModuleExportDeclarationUsingParseStatements', function() {
+    var className = 'Foo';
+    var trees = parseStatements `export default class ${className} {}`;
+    assert.equal('export default class Foo {}', write(trees[0]));
+  });
+
+  test('ParseScriptFunctionDeclarations', function() {
+    var f1 = 'f1';
+    var f2 = 'f2';
+    var tree = parseScript `function ${f1}() { } function ${f2}() { }`;
+    assert.equal('function f1() {}\nfunction f2() {}\n', write(tree));
+  });
+
+  test('ParseModuleImportDeclaration', function() {
+    var className = 'Foo';
+    var tree = parseStatement `import {${className}} from 'name'`;
+    assert.equal('import {Foo} from \'name\';', write(tree));
+  });
+
+  test('ParseModuleImportDeclaration', function() {
+    var className = 'Foo';
+    var tree = parseStatement `import {Bar as ${className}} from 'name'`;
+    assert.equal('import {Bar as Foo} from \'name\';', write(tree));
+  });
+
+  test('ParseModuleImportDeclaration', function() {
+    var className = 'Foo';
+    var tree = parseStatement `import ${className} from 'name'`;
+    assert.equal('import Foo from \'name\';', write(tree));
   });
 
 });

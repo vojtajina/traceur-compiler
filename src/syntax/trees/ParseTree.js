@@ -12,103 +12,72 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-module ParseTreeType from './ParseTreeType';
+import * as ParseTreeType from './ParseTreeType';
 import {
+  IDENTIFIER,
+  STAR,
   STRING,
-  VAR
+  VAR,
 } from '../TokenType';
 import {Token} from '../Token';
-module utilJSON from '../../util/JSON';
+import * as utilJSON from '../../util/JSON';
+import {ASYNC} from '../PredefinedName';
 
 import {
-  ARGUMENT_LIST,
   ARRAY_COMPREHENSION,
   ARRAY_LITERAL_EXPRESSION,
   ARRAY_PATTERN,
   ARROW_FUNCTION_EXPRESSION,
-  AWAIT_STATEMENT,
-  BINARY_OPERATOR,
-  BINDING_ELEMENT,
+  AWAIT_EXPRESSION,
+  BINARY_EXPRESSION,
   BINDING_IDENTIFIER,
   BLOCK,
   BREAK_STATEMENT,
   CALL_EXPRESSION,
-  CASE_CLAUSE,
-  CATCH,
   CLASS_DECLARATION,
   CLASS_EXPRESSION,
   COMMA_EXPRESSION,
-  COMPREHENSION_FOR,
-  COMPREHENSION_IF,
-  COMPUTED_PROPERTY_NAME,
   CONDITIONAL_EXPRESSION,
   CONTINUE_STATEMENT,
-  COVER_FORMALS,
-  COVER_INITIALISED_NAME,
   DEBUGGER_STATEMENT,
-  DEFAULT_CLAUSE,
   DO_WHILE_STATEMENT,
   EMPTY_STATEMENT,
   EXPORT_DECLARATION,
-  EXPORT_SPECIFIER,
-  EXPORT_SPECIFIER_SET,
-  EXPORT_STAR,
   EXPRESSION_STATEMENT,
-  FINALLY,
   FOR_IN_STATEMENT,
   FOR_OF_STATEMENT,
   FOR_STATEMENT,
   FORMAL_PARAMETER,
-  FORMAL_PARAMETER_LIST,
-  FUNCTION_BODY,
   FUNCTION_DECLARATION,
   FUNCTION_EXPRESSION,
   GENERATOR_COMPREHENSION,
-  GET_ACCESSOR,
   IDENTIFIER_EXPRESSION,
   IF_STATEMENT,
   IMPORT_DECLARATION,
-  IMPORT_SPECIFIER,
-  IMPORT_SPECIFIER_SET,
+  IMPORTED_BINDING,
   LABELLED_STATEMENT,
   LITERAL_EXPRESSION,
-  LITERAL_PROPERTY_NAME,
   MEMBER_EXPRESSION,
   MEMBER_LOOKUP_EXPRESSION,
-  MODULE,
   MODULE_DECLARATION,
-  MODULE_SPECIFIER,
-  NAMED_EXPORT,
   NEW_EXPRESSION,
   OBJECT_LITERAL_EXPRESSION,
   OBJECT_PATTERN,
-  OBJECT_PATTERN_FIELD,
   PAREN_EXPRESSION,
   POSTFIX_EXPRESSION,
-  PREDEFINED_TYPE,
-  PROPERTY_METHOD_ASSIGNMENT,
-  PROPERTY_NAME_ASSIGNMENT,
   PROPERTY_NAME_SHORTHAND,
   REST_PARAMETER,
   RETURN_STATEMENT,
-  SCRIPT,
-  SET_ACCESSOR,
   SPREAD_EXPRESSION,
   SPREAD_PATTERN_ELEMENT,
-  STATE_MACHINE,
   SUPER_EXPRESSION,
   SWITCH_STATEMENT,
-  SYNTAX_ERROR_TREE,
   TEMPLATE_LITERAL_EXPRESSION,
-  TEMPLATE_LITERAL_PORTION,
-  TEMPLATE_SUBSTITUTION,
   THIS_EXPRESSION,
   THROW_STATEMENT,
   TRY_STATEMENT,
-  TYPE_NAME,
   UNARY_EXPRESSION,
   VARIABLE_DECLARATION,
-  VARIABLE_DECLARATION_LIST,
   VARIABLE_STATEMENT,
   WHILE_STATEMENT,
   WITH_STATEMENT,
@@ -151,8 +120,6 @@ export class ParseTree {
       case ARRAY_PATTERN:
       case OBJECT_PATTERN:
         return true;
-      case PAREN_EXPRESSION:
-        return this.expression.isPattern();
       default:
         return false;
     }
@@ -183,12 +150,13 @@ export class ParseTree {
   }
 
   /** @return {boolean} */
-  isArrowFunctionExpression() {
+  isAssignmentExpression() {
     switch (this.type) {
       case ARRAY_COMPREHENSION:
       case ARRAY_LITERAL_EXPRESSION:
       case ARROW_FUNCTION_EXPRESSION:
-      case BINARY_OPERATOR:
+      case AWAIT_EXPRESSION:
+      case BINARY_EXPRESSION:
       case CALL_EXPRESSION:
       case CLASS_EXPRESSION:
       case CONDITIONAL_EXPRESSION:
@@ -253,13 +221,13 @@ export class ParseTree {
 
   /** @return {boolean} */
   isExpression() {
-    return this.isArrowFunctionExpression() ||
+    return this.isAssignmentExpression() ||
         this.type == COMMA_EXPRESSION;
   }
 
   /** @return {boolean} */
   isAssignmentOrSpread() {
-    return this.isArrowFunctionExpression() ||
+    return this.isAssignmentExpression() ||
         this.type == SPREAD_EXPRESSION;
   }
 
@@ -293,8 +261,6 @@ export class ParseTree {
       case THROW_STATEMENT:
       case TRY_STATEMENT:
       case DEBUGGER_STATEMENT:
-
-      case AWAIT_STATEMENT:  // Traceur extension.
         return true;
     }
 
@@ -362,6 +328,16 @@ export class ParseTree {
     return this.isStatement();
   }
 
+  isGenerator() {
+    return this.functionKind !== null && this.functionKind.type === STAR;
+  }
+
+  isAsyncFunction() {
+    return this.functionKind !== null &&
+        this.functionKind.type === IDENTIFIER &&
+        this.functionKind.value === ASYNC;
+  }
+
   getDirectivePrologueStringToken_() {
     var tree = this;
     if (tree.type !== EXPRESSION_STATEMENT || !(tree = tree.expression))
@@ -394,6 +370,26 @@ export class ParseTree {
 
   stringify(indent = 2) {
     return JSON.stringify(this, ParseTree.replacer, indent);
+  }
+
+  /**
+   * Gets the string value of a tree. This matches the StringValue static
+   * semantics of the spec.
+   * @returns {string}
+   */
+  getStringValue() {
+    switch (this.type) {
+      case IDENTIFIER_EXPRESSION:
+      case BINDING_IDENTIFIER:
+        return this.identifierToken.toString();
+      case IMPORTED_BINDING:
+        return this.binding.getStringValue();
+      case PROPERTY_NAME_SHORTHAND:
+        return this.name.toString();
+    }
+
+    throw new Error('Not yet implemented');
+
   }
 
   /**

@@ -13,19 +13,57 @@
 // limitations under the License.
 
 import {ModuleTransformer} from './ModuleTransformer';
-import {RETURN_STATEMENT} from '../syntax/trees/ParseTreeType';
+import {
+  GET_ACCESSOR,
+  OBJECT_LITERAL_EXPRESSION,
+  PROPERTY_NAME_ASSIGNMENT,
+  RETURN_STATEMENT
+} from '../syntax/trees/ParseTreeType';
 import {assert} from '../util/assert';
 import globalThis from './globalThis';
 import {
   parseExpression,
+  parsePropertyDefinition,
   parseStatement,
   parseStatements
 } from './PlaceholderParser';
 import scopeContainsThis from './scopeContainsThis';
+import {
+  createEmptyParameterList,
+  createFunctionExpression,
+  createIdentifierExpression,
+  createObjectLiteralExpression,
+  createPropertyNameAssignment,
+  createVariableStatement,
+  createVariableDeclaration,
+  createVariableDeclarationList
+} from './ParseTreeFactory';
+import {VAR} from '../syntax/TokenType';
+import {prependStatements} from './PrependStatements';
 
 export class CommonJsModuleTransformer extends ModuleTransformer {
 
+  constructor(identifierGenerator) {
+    super(identifierGenerator);
+    this.moduleVars_ = [];
+  }
+
+  moduleProlog() {
+    var statements = super();
+
+    // declare temp vars in prolog
+    if (this.moduleVars_.length) {
+      var tmpVarDeclarations = createVariableStatement(createVariableDeclarationList(VAR,
+          this.moduleVars_.map((varName) => createVariableDeclaration(varName, null))));
+
+      statements.push(tmpVarDeclarations);
+    }
+
+    return statements;
+  }
+
   wrapModule(statements) {
+
     var needsIife = statements.some(scopeContainsThis);
 
     if (needsIife) {
@@ -44,12 +82,58 @@ export class CommonJsModuleTransformer extends ModuleTransformer {
     // might be because it wants to make its own changes to "exports" or
     // "module.exports", so we don't append "module.exports = {}" to the output.
     if (this.hasExports()) {
-      statements.push(parseStatement `module.exports = ${exportObject};`);
+      var descriptors = this.transformObjectLiteralToDescriptors(exportObject);
+      var exportStatement = parseStatement `Object.defineProperties(exports, ${descriptors});`;
+      statements = prependStatements(statements, exportStatement);
     }
     return statements;
   }
 
+  transformObjectLiteralToDescriptors(literalTree) {
+    assert(literalTree.type === OBJECT_LITERAL_EXPRESSION);
+
+    var props = literalTree.propertyNameAndValues.map((exp) => {
+      var descriptor;
+
+      switch (exp.type) {
+        case GET_ACCESSOR:
+          var getterFunction = createFunctionExpression(createEmptyParameterList(), exp.body);
+          descriptor = parseExpression `{get: ${getterFunction}}`;
+          break;
+
+        case PROPERTY_NAME_ASSIGNMENT:
+          descriptor = parseExpression `{value: ${exp.value}}`;
+          break;
+
+        default:
+          throw new Error(`Unexpected property type ${exp.type}`);
+      }
+
+      return createPropertyNameAssignment(exp.name, descriptor);
+    });
+
+    return createObjectLiteralExpression(props);
+  }
+
   transformModuleSpecifier(tree) {
-    return parseExpression `require(${tree.token})`;
+    var moduleName = tree.token.processedValue;
+    var tmpVar = this.getTempVarNameForModuleSpecifier(tree);
+    this.moduleVars_.push(tmpVar);
+    var tvId = createIdentifierExpression(tmpVar);
+
+    // require the module, if it is not marked as an ES6 module, treat it as { default: module }
+    // this allows for an unlinked CommonJS / ES6 interop
+    // note that future implementations should also check for native Module with 
+    //   Reflect.isModule or similar
+    return parseExpression `(${tvId} = require(${moduleName}), 
+        ${tvId} && ${tvId}.__esModule && ${tvId} || {default: ${tvId}})`;
+  }
+
+  getExportProperties() {
+    var properties = super();
+
+    if (this.exportVisitor_.hasExports())
+      properties.push(parsePropertyDefinition `__esModule: true`);
+    return properties;
   }
 }

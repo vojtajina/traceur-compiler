@@ -13,56 +13,81 @@
 // limitations under the License.
 
 export {System} from './runtime/System';
-import {System} from './runtime/System';
-export var ModuleStore =
-    System.get('@traceur/src/runtime/ModuleStore').ModuleStore;
 
-export {options} from './options';
+// Used by unit tests only
+import './util/MutedErrorReporter';
 
+export {ModuleStore} from '@traceur/src/runtime/ModuleStore';
 export {WebPageTranscoder} from './WebPageTranscoder';
+export {options} from './Options';
+import {addOptions, CommandOptions, Options} from './Options';
 
-import {ExportListBuilder} from './codegeneration/module/ExportListBuilder';
+import {ModuleStore} from '@traceur/src/runtime/ModuleStore';
 
-export var semantics = {
-  ExportListBuilder,
-};
+export function get(name) {
+  return ModuleStore.get(ModuleStore.normalize('./' + name, __moduleName));
+}
+
+export {Compiler} from './Compiler';
 
 import {ErrorReporter} from './util/ErrorReporter';
-import {SourcePosition} from './util/SourcePosition';
-import {SyntaxErrorReporter} from './util/SyntaxErrorReporter';
-import {TestErrorReporter} from './util/TestErrorReporter';
-import {resolveUrl} from './util/url';
+import {CollectingErrorReporter} from './util/CollectingErrorReporter';
 
 export var util = {
+  addOptions,
+  CommandOptions,
+  CollectingErrorReporter,
   ErrorReporter,
-  SourcePosition,
-  SyntaxErrorReporter,
-  TestErrorReporter,
-  resolveUrl
+  Options
 };
 
-import {IdentifierToken} from './syntax/IdentifierToken';
-import {LiteralToken} from './syntax/LiteralToken';
 import {Parser} from './syntax/Parser';
 import {Scanner} from './syntax/Scanner';
+import {Script, VariableStatement, VariableDeclarationList} from './syntax/trees/ParseTrees';
 import {SourceFile} from './syntax/SourceFile';
+import {CONSTRUCTOR, FROM} from './syntax/PredefinedName';
 import {Token} from './syntax/Token';
-module TokenType from './syntax/TokenType';
-module trees from './syntax/trees/ParseTrees';
+import {EQUAL_EQUAL_EQUAL, OPEN_PAREN, CLOSE_PAREN, IMPORT, SEMI_COLON, STAR, OPEN_CURLY, CLOSE_CURLY, COMMA, AT} from './syntax/TokenType';
+import {PROPERTY_METHOD_ASSIGNMENT, MEMBER_EXPRESSION, THIS_EXPRESSION} from './syntax/trees/ParseTreeType';
+import {ParseTree} from './syntax/trees/ParseTree';
 
 export var syntax = {
-  IdentifierToken,
-  LiteralToken,
+  PredefinedName: {
+    CONSTRUCTOR,
+    FROM
+  },
+  Token,
+  TokenType: {
+    EQUAL_EQUAL_EQUAL,
+    OPEN_PAREN,
+    CLOSE_PAREN,
+    IMPORT,
+    SEMI_COLON,
+    STAR,
+    OPEN_CURLY,
+    CLOSE_CURLY,
+    COMMA,
+    AT
+  },
   Parser,
   Scanner,
   SourceFile,
-  Token,
-  TokenType,
-  trees
+  trees: {
+    ParseTree,
+    Script,
+    VariableDeclarationList,
+    VariableStatement,
+    ParseTreeType: {
+      PROPERTY_METHOD_ASSIGNMENT: PROPERTY_METHOD_ASSIGNMENT,
+      MEMBER_EXPRESSION: MEMBER_EXPRESSION,
+      THIS_EXPRESSION: THIS_EXPRESSION
+    },
+  }
 };
 
 import {ParseTreeMapWriter} from './outputgeneration/ParseTreeMapWriter';
 import {ParseTreeWriter} from './outputgeneration/ParseTreeWriter';
+import {regexpuRewritePattern} from './outputgeneration/regexpuRewritePattern';
 import {SourceMapConsumer} from './outputgeneration/SourceMapIntegration';
 import {SourceMapGenerator} from './outputgeneration/SourceMapIntegration';
 import {TreeWriter} from './outputgeneration/TreeWriter';
@@ -70,49 +95,58 @@ import {TreeWriter} from './outputgeneration/TreeWriter';
 export var outputgeneration = {
   ParseTreeMapWriter,
   ParseTreeWriter,
+  regexpuRewritePattern,
   SourceMapConsumer,
   SourceMapGenerator,
   TreeWriter
 };
 
-import {AmdTransformer} from './codegeneration/AmdTransformer';
 import {AttachModuleNameTransformer} from './codegeneration/module/AttachModuleNameTransformer';
 import {CloneTreeTransformer} from './codegeneration/CloneTreeTransformer';
-import {CommonJsModuleTransformer} from './codegeneration/CommonJsModuleTransformer';
-import {DirectExportVisitor} from './codegeneration/module/DirectExportVisitor';
 import {FromOptionsTransformer} from './codegeneration/FromOptionsTransformer';
-import {InlineModuleTransformer} from './codegeneration/InlineModuleTransformer';
-import {ModuleSpecifierVisitor} from './codegeneration/module/ModuleSpecifierVisitor';
-import {ModuleTransformer} from './codegeneration/ModuleTransformer';
-import {ParseTreeTransformer} from './codegeneration/ParseTreeTransformer';
+import {PureES6Transformer} from './codegeneration/PureES6Transformer';
 import {createModuleEvaluationStatement} from './codegeneration/module/createModuleEvaluationStatement';
-module ParseTreeFactory from './codegeneration/ParseTreeFactory';
+import {parseExpression, parseModule, parseScript, parseStatement} from './codegeneration/PlaceholderParser';
+import {ParseTreeTransformer} from './codegeneration/ParseTreeTransformer';
+import {createVariableStatement, createCallExpression, createIdentifierExpression, createArgumentList} from './codegeneration/ParseTreeFactory';
+import {MultiTransformer} from './codegeneration/MultiTransformer';
 
 export var codegeneration = {
-  AmdTransformer,
-  CloneTreeTransformer,
-  CommonJsModuleTransformer,
-  FromOptionsTransformer,
-  InlineModuleTransformer,
-  ModuleTransformer,
-  ParseTreeFactory,
   ParseTreeTransformer,
+  ParseTreeFactory: {
+    createVariableStatement: createVariableStatement,
+    createCallExpression: createCallExpression,
+    createIdentifierExpression: createIdentifierExpression,
+    createArgumentList: createArgumentList
+  },
+  MultiTransformer,
+  CloneTreeTransformer,
+  FromOptionsTransformer,
+  PureES6Transformer,
+  parseExpression,
+  parseModule,
+  parseScript,
+  parseStatement,
   module: {
     AttachModuleNameTransformer,
-    DirectExportVisitor,
-    ModuleSpecifierVisitor,
     createModuleEvaluationStatement
   }
 };
 
 import {Loader} from './runtime/Loader';
-import {LoaderHooks} from './runtime/LoaderHooks';
-import {InterceptOutputLoaderHooks} from './runtime/InterceptOutputLoaderHooks';
+import {LoaderCompiler} from './runtime/LoaderCompiler';
+import {InlineLoaderCompiler} from './runtime/InlineLoaderCompiler';
 import {TraceurLoader} from './runtime/TraceurLoader';
 
 export var runtime = {
-  InterceptOutputLoaderHooks,
+  InlineLoaderCompiler,
   Loader,
-  LoaderHooks,
+  LoaderCompiler,
   TraceurLoader
-}
+};
+
+import {propName} from './staticsemantics/PropName';
+
+export var staticsemantics = {
+  propName
+};

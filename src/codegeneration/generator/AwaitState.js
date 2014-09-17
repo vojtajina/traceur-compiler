@@ -20,25 +20,12 @@ export class AwaitState extends State {
    * @param {number} id
    * @param {ParseTree} expression
    * @param {number} callbackState
-   * @param {number} errbackState
    * @param {Array.<ParseTree>} statements
    */
-  constructor(id, callbackState, errbackState, expression) {
+  constructor(id, callbackState, expression) {
     super(id),
     this.callbackState = callbackState;
-    this.errbackState = errbackState;
     this.expression = expression;
-    this.statements_ = null;
-  }
-
-  get statements() {
-    if (!this.statements_) {
-      this.statements_ = parseStatements
-          `(${this.expression}).then($ctx.createCallback(${this.callbackState}),
-                                     $ctx.createErrback(${this.errbackState}));
-          return`;
-    }
-    return this.statements_;
   }
 
   /**
@@ -50,7 +37,6 @@ export class AwaitState extends State {
     return new AwaitState(
         State.replaceStateId(this.id, oldState, newState),
         State.replaceStateId(this.callbackState, oldState, newState),
-        State.replaceStateId(this.errbackState, oldState, newState),
         this.expression);
   }
 
@@ -61,7 +47,20 @@ export class AwaitState extends State {
    * @return {Array.<ParseTree>}
    */
   transform(enclosingFinally, machineEndState, reporter) {
-    return this.statements;
+    var stateId, statements;
+    if (State.isFinallyExit(enclosingFinally, this.callbackState)) {
+      stateId = enclosingFinally.finallyState;
+      statements =
+          parseStatements `$ctx.finallyFallThrough = ${this.callbackState}`;
+    } else {
+      stateId = this.callbackState;
+      statements = [];
+    }
+
+    statements.push(
+      ...parseStatements `Promise.resolve(${this.expression}).then(
+          $ctx.createCallback(${stateId}), $ctx.errback);
+          return;`);
+    return statements;
   }
 }
-

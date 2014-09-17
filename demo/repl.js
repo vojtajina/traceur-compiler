@@ -82,7 +82,7 @@ function compile(cmd, url) {
     var Loader = traceur.runtime.Loader;
     var loaderHooks = new InterceptOutputLoaderHooks(reporter, url);
     var loader = new Loader(loaderHooks);
-    loader.script(cmd, url);
+    loader.script(cmd, {address: url});
     var output = loaderHooks.transcoded;
     debug('traceur-output: %s', output);
     return output;
@@ -121,7 +121,7 @@ function isWrapped(cmd) {
  * Or to be more specific, the globals from the current context are copied
  * into the repl context -- except for the core JS objects such as Object,
  * String, Array, etc.
- * @param {object} ctx The context to initialise.
+ * @param {object} ctx The context to initialize.
  * @param {string} filename The filename to use when reporting errors.
  */
 function init(ctx, filename) {

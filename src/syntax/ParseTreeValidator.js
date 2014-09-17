@@ -51,12 +51,15 @@ import {
   SLASH_EQUAL,
   STAR,
   STAR_EQUAL,
+  STAR_STAR,
+  STAR_STAR_EQUAL,
   STRING,
   UNSIGNED_RIGHT_SHIFT,
   UNSIGNED_RIGHT_SHIFT_EQUAL
 } from './TokenType';
 import {
   ARRAY_PATTERN,
+  ASSIGNMENT_ELEMENT,
   BINDING_ELEMENT,
   BINDING_IDENTIFIER,
   BLOCK,
@@ -65,7 +68,6 @@ import {
   CLASS_DECLARATION,
   COMPUTED_PROPERTY_NAME,
   DEFAULT_CLAUSE,
-  EXPORT_DECLARATION,
   EXPORT_DEFAULT,
   EXPORT_SPECIFIER,
   EXPORT_SPECIFIER_SET,
@@ -77,7 +79,7 @@ import {
   FUNCTION_DECLARATION,
   GET_ACCESSOR,
   IDENTIFIER_EXPRESSION,
-  IMPORT_DECLARATION,
+  IMPORTED_BINDING,
   LITERAL_PROPERTY_NAME,
   MODULE_DECLARATION,
   MODULE_SPECIFIER,
@@ -195,7 +197,7 @@ export class ParseTreeValidator extends ParseTreeVisitor {
       var element = tree.elements[i];
       this.checkVisit_(element === null ||
           element.type === BINDING_ELEMENT ||
-          element.type == IDENTIFIER_EXPRESSION ||
+          element.type == ASSIGNMENT_ELEMENT ||
           element.isLeftHandSideExpression() ||
           element.isPattern() ||
           element.isSpreadPatternElement(),
@@ -210,21 +212,14 @@ export class ParseTreeValidator extends ParseTreeVisitor {
   }
 
   /**
-   * @param {AwaitStatement} tree
+   * @param {BinaryExpression} tree
    */
-  visitAwaitStatement(tree) {
-    this.checkVisit_(tree.expression.isExpression(), tree.expression,
-        'await must be expression');
-  }
-
-  /**
-   * @param {BinaryOperator} tree
-   */
-  visitBinaryOperator(tree) {
+  visitBinaryExpression(tree) {
     switch (tree.operator.type) {
       // assignment
       case EQUAL:
       case STAR_EQUAL:
+      case STAR_STAR_EQUAL:
       case SLASH_EQUAL:
       case PERCENT_EQUAL:
       case PLUS_EQUAL:
@@ -239,7 +234,7 @@ export class ParseTreeValidator extends ParseTreeVisitor {
             tree.left.isPattern(),
             tree.left,
             'left hand side expression or pattern expected');
-        this.check_(tree.right.isArrowFunctionExpression(),
+        this.check_(tree.right.isAssignmentExpression(),
             tree.right,
             'assignment expression expected');
         break;
@@ -278,9 +273,12 @@ export class ParseTreeValidator extends ParseTreeVisitor {
       case STAR:
       case SLASH:
       case PERCENT:
-        this.check_(tree.left.isArrowFunctionExpression(), tree.left,
+
+      // exponentiation
+      case STAR_STAR:
+        this.check_(tree.left.isAssignmentExpression(), tree.left,
             'assignment expression expected');
-        this.check_(tree.right.isArrowFunctionExpression(), tree.right,
+        this.check_(tree.right.isAssignmentExpression(), tree.right,
             'assignment expression expected');
         break;
 
@@ -302,7 +300,21 @@ export class ParseTreeValidator extends ParseTreeVisitor {
         binding.type == ARRAY_PATTERN,
         binding,
         'expected valid binding element');
-    this.visitAny(tree.initialiser);
+    this.visitAny(tree.initializer);
+  }
+
+  /**
+   * @param {AssignmentElement} tree
+   */
+  visitAssignmentElement(tree) {
+    var assignment = tree.assignment;
+    this.checkVisit_(
+        assignment.type == OBJECT_PATTERN ||
+        assignment.type == ARRAY_PATTERN ||
+        assignment.isLeftHandSideExpression(),
+        assignment,
+        'expected valid assignment element');
+    this.visitAny(tree.initializer);
   }
 
   /**
@@ -379,7 +391,7 @@ export class ParseTreeValidator extends ParseTreeVisitor {
   visitCommaExpression(tree) {
     for (var i = 0; i < tree.expressions.length; i++) {
       var expression = tree.expressions[i];
-      this.checkVisit_(expression.isArrowFunctionExpression(), expression,
+      this.checkVisit_(expression.isAssignmentExpression(), expression,
           'expression expected');
     }
   }
@@ -388,11 +400,11 @@ export class ParseTreeValidator extends ParseTreeVisitor {
    * @param {ConditionalExpression} tree
    */
   visitConditionalExpression(tree) {
-    this.checkVisit_(tree.condition.isArrowFunctionExpression(), tree.condition,
+    this.checkVisit_(tree.condition.isAssignmentExpression(), tree.condition,
         'expression expected');
-    this.checkVisit_(tree.left.isArrowFunctionExpression(), tree.left,
+    this.checkVisit_(tree.left.isAssignmentExpression(), tree.left,
         'expression expected');
-    this.checkVisit_(tree.right.isArrowFunctionExpression(), tree.right,
+    this.checkVisit_(tree.right.isAssignmentExpression(), tree.right,
         'expression expected');
   }
 
@@ -400,8 +412,8 @@ export class ParseTreeValidator extends ParseTreeVisitor {
     this.fail_(tree, 'CoverFormals should have been removed');
   }
 
-  visitCoverInitialisedName(tree) {
-    this.fail_(tree, 'CoverInitialisedName should have been removed');
+  visitCoverInitializedName(tree) {
+    this.fail_(tree, 'CoverInitializedName should have been removed');
   }
 
   /**
@@ -496,11 +508,11 @@ export class ParseTreeValidator extends ParseTreeVisitor {
    */
   visitForOfStatement(tree) {
     this.checkVisit_(
-      tree.initialiser.isPattern() ||
-      tree.initialiser.type === IDENTIFIER_EXPRESSION ||
-      tree.initialiser.type === VARIABLE_DECLARATION_LIST &&
-      tree.initialiser.declarations.length === 1,
-        tree.initialiser,
+      tree.initializer.isPattern() ||
+      tree.initializer.type === IDENTIFIER_EXPRESSION ||
+      tree.initializer.type === VARIABLE_DECLARATION_LIST &&
+      tree.initializer.declarations.length === 1,
+        tree.initializer,
         'for-each statement may not have more than one variable declaration');
     this.checkVisit_(tree.collection.isExpression(), tree.collection,
         'expression expected');
@@ -512,16 +524,16 @@ export class ParseTreeValidator extends ParseTreeVisitor {
    * @param {ForInStatement} tree
    */
   visitForInStatement(tree) {
-    if (tree.initialiser.type === VARIABLE_DECLARATION_LIST) {
+    if (tree.initializer.type === VARIABLE_DECLARATION_LIST) {
       this.checkVisit_(
-          tree.initialiser.declarations.length <=
+          tree.initializer.declarations.length <=
               1,
-          tree.initialiser,
+          tree.initializer,
           'for-in statement may not have more than one variable declaration');
     } else {
-      this.checkVisit_(tree.initialiser.isPattern() ||
-                       tree.initialiser.isExpression(),
-                       tree.initialiser,
+      this.checkVisit_(tree.initializer.isPattern() ||
+                       tree.initializer.isExpression(),
+                       tree.initializer,
                        'variable declaration, expression or ' +
                        'pattern expected');
     }
@@ -566,11 +578,11 @@ export class ParseTreeValidator extends ParseTreeVisitor {
    * @param {ForStatement} tree
    */
   visitForStatement(tree) {
-    if (tree.initialiser !== null) {
+    if (tree.initializer !== null) {
       this.checkVisit_(
-          tree.initialiser.isExpression() ||
-          tree.initialiser.type === VARIABLE_DECLARATION_LIST,
-          tree.initialiser,
+          tree.initializer.isExpression() ||
+          tree.initializer.type === VARIABLE_DECLARATION_LIST,
+          tree.initializer,
           'variable declaration list or expression expected');
     }
     if (tree.condition !== null) {
@@ -620,11 +632,11 @@ export class ParseTreeValidator extends ParseTreeVisitor {
 
   visitFunction_(tree) {
     this.checkType_(FORMAL_PARAMETER_LIST,
-                    tree.formalParameterList,
+                    tree.parameterList,
                     'formal parameters expected');
 
     this.checkType_(FUNCTION_BODY,
-                    tree.functionBody,
+                    tree.body,
                     'function body expected');
   }
 
@@ -648,6 +660,15 @@ export class ParseTreeValidator extends ParseTreeVisitor {
       this.checkVisit_(tree.elseClause.isStatement(), tree.elseClause,
           'statement expected');
     }
+  }
+
+  visitImportSpecifier(tree) {
+    this.checkType_(IMPORTED_BINDING, tree.binding, 'ImportedBinding expected');
+  }
+
+  visitImportedBinding(tree) {
+    this.checkType_(BINDING_IDENTIFIER, tree.binding,
+                    'binding identifier expected');
   }
 
   /**
@@ -705,6 +726,9 @@ export class ParseTreeValidator extends ParseTreeVisitor {
    * @param {ModuleDeclaration} tree
    */
   visitModuleDeclaration(tree) {
+    this.checkType_(IMPORTED_BINDING,
+                    tree.binding,
+                    'ImportedBinding expected');
     this.checkType_(MODULE_SPECIFIER,
                     tree.expression,
                     'module expression expected');
@@ -750,8 +774,8 @@ export class ParseTreeValidator extends ParseTreeVisitor {
     for (var i = 0; i < tree.fields.length; i++) {
       var field = tree.fields[i];
       this.checkVisit_(field.type === OBJECT_PATTERN_FIELD ||
-                       field.type === BINDING_ELEMENT ||
-                       field.type === IDENTIFIER_EXPRESSION,
+                       field.type === ASSIGNMENT_ELEMENT ||
+                       field.type === BINDING_ELEMENT,
                        field,
                        'object pattern field expected');
     }
@@ -762,7 +786,8 @@ export class ParseTreeValidator extends ParseTreeVisitor {
    */
   visitObjectPatternField(tree) {
     this.checkPropertyName_(tree.name);
-   this.checkVisit_(tree.element.type === BINDING_ELEMENT ||
+    this.checkVisit_(tree.element.type === ASSIGNMENT_ELEMENT ||
+                     tree.element.type === BINDING_ELEMENT ||
                      tree.element.isPattern() ||
                      tree.element.isLeftHandSideExpression(),
                      tree.element,
@@ -785,7 +810,7 @@ export class ParseTreeValidator extends ParseTreeVisitor {
    * @param {PostfixExpression} tree
    */
   visitPostfixExpression(tree) {
-    this.checkVisit_(tree.operand.isArrowFunctionExpression(), tree.operand,
+    this.checkVisit_(tree.operand.isAssignmentExpression(), tree.operand,
         'assignment expression expected');
   }
 
@@ -821,7 +846,7 @@ export class ParseTreeValidator extends ParseTreeVisitor {
    */
   visitPropertyNameAssignment(tree) {
     this.checkPropertyName_(tree.name);
-    this.checkVisit_(tree.value.isArrowFunctionExpression(), tree.value,
+    this.checkVisit_(tree.value.isAssignmentExpression(), tree.value,
         'assignment expression expected');
   }
 
@@ -894,7 +919,7 @@ export class ParseTreeValidator extends ParseTreeVisitor {
    * @param {SpreadExpression} tree
    */
   visitSpreadExpression(tree) {
-    this.checkVisit_(tree.expression.isArrowFunctionExpression(),
+    this.checkVisit_(tree.expression.isAssignmentExpression(),
         tree.expression,
         'assignment expression expected');
   }
@@ -967,7 +992,7 @@ export class ParseTreeValidator extends ParseTreeVisitor {
    * @param {UnaryExpression} tree
    */
   visitUnaryExpression(tree) {
-    this.checkVisit_(tree.operand.isArrowFunctionExpression(), tree.operand,
+    this.checkVisit_(tree.operand.isAssignmentExpression(), tree.operand,
         'assignment expression expected');
   }
 
@@ -979,9 +1004,9 @@ export class ParseTreeValidator extends ParseTreeVisitor {
                      tree.lvalue.type == BINDING_IDENTIFIER,
                      tree.lvalue,
                      'binding identifier expected, found: ' + tree.lvalue.type);
-    if (tree.initialiser !== null) {
-      this.checkVisit_(tree.initialiser.isArrowFunctionExpression(),
-          tree.initialiser, 'assignment expression expected');
+    if (tree.initializer !== null) {
+      this.checkVisit_(tree.initializer.isAssignmentExpression(),
+          tree.initializer, 'assignment expression expected');
     }
   }
 

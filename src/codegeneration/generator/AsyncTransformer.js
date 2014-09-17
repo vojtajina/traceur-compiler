@@ -13,25 +13,47 @@
 // limitations under the License.
 
 import {AwaitState} from './AwaitState';
+import {
+  BinaryExpression,
+  ExpressionStatement
+} from '../../syntax/trees/ParseTrees';
 import {CPSTransformer} from './CPSTransformer';
 import {EndState} from './EndState';
 import {FallThroughState} from './FallThroughState';
-import {STATE_MACHINE} from '../../syntax/trees/ParseTreeType';
+import {
+  AWAIT_EXPRESSION,
+  BINARY_EXPRESSION,
+  STATE_MACHINE
+} from '../../syntax/trees/ParseTreeType';
 import {
   parseExpression,
   parseStatement,
   parseStatements
 } from '../PlaceholderParser';
-import {State} from './State';
 import {StateMachine} from '../../syntax/trees/StateMachine';
-import {VAR} from '../../syntax/TokenType';
-import {
-  createAssignStateStatement,
-  createBreakStatement,
-  createReturnStatement,
-  createStatementList,
-  createUndefinedExpression
-} from '../ParseTreeFactory';
+import {FindInFunctionScope} from '../FindInFunctionScope'
+import {createUndefinedExpression} from '../ParseTreeFactory';
+
+/**
+ * @param {ParseTree} tree Expression tree
+ * @return {boolean}
+ */
+function isAwaitAssign(tree) {
+  return tree.type === BINARY_EXPRESSION &&
+      tree.operator.isAssignmentOperator() &&
+      tree.right.type === AWAIT_EXPRESSION &&
+      tree.left.isLeftHandSideExpression();
+}
+
+class AwaitFinder extends FindInFunctionScope {
+  visitAwaitExpression(tree) {
+    this.found = true;
+  }
+}
+
+function scopeContainsAwait(tree) {
+  return new AwaitFinder(tree).found;
+}
 
 /**
  * Desugars async function bodies. Async function bodies contain 'async' statements.
@@ -44,50 +66,81 @@ import {
  * }
  */
 export class AsyncTransformer extends CPSTransformer {
-  /**
-   * Yield statements are translated into a state machine with a single state.
-   * @param {YieldExpression} tree
-   * @return {ParseTree}
-   */
-  transformYieldExpression(tree) {
-    this.reporter.reportError(tree.location.start,
-        'Async function may not have a yield expression.');
-    return tree;
+
+  expressionNeedsStateMachine(tree) {
+    if (tree === null)
+      return false;
+    return scopeContainsAwait(tree);
   }
 
-  /**
-   * @param {AwaitStatement} tree
-   * @return {ParseTree}
-   */
-  transformAwaitStatement(tree) {
+  transformExpressionStatement(tree) {
+    var expression = tree.expression;
+    if (expression.type === AWAIT_EXPRESSION)
+      return this.transformAwaitExpression_(expression);
+
+    if (isAwaitAssign(expression))
+      return this.transformAwaitAssign_(expression);
+
+    if (this.expressionNeedsStateMachine(expression)) {
+       return this.expressionToStateMachine(expression).machine;
+    }
+
+    return super.transformExpressionStatement(tree);
+  }
+
+  transformAwaitExpression(tree) {
+    throw new Error('Internal error');
+  }
+
+  transformAwaitExpression_(tree) {
+    return this.transformAwait_(tree, tree.expression, null, null);
+  }
+
+  transformAwaitAssign_(tree) {
+    return this.transformAwait_(tree, tree.right.expression, tree.left,
+                                tree.operator);
+  }
+
+  transformAwait_(tree, inExpression, left, operator) {
+    var expression, machine;
+    if (this.expressionNeedsStateMachine(inExpression)) {
+      ({expression, machine} = this.expressionToStateMachine(inExpression));
+    } else {
+      expression = this.transformAny(inExpression);
+    }
+
     var createTaskState = this.allocateState();
-    var callbackState = this.allocateState();
-    var errbackState = this.allocateState();
     var fallThroughState = this.allocateState();
+    var callbackState = left ? this.allocateState() : fallThroughState;
 
     var states = [];
-    var expression = this.transformAny(tree.expression);
     //  case createTaskState:
-    states.push(new AwaitState(createTaskState, callbackState, errbackState,
-                               expression));
+    states.push(new AwaitState(createTaskState, callbackState, expression));
 
     //  case callbackState:
     //    identifier = $ctx.value;
     //    $ctx.state = fallThroughState;
     //    break;
-    var assignment;
-    if (tree.identifier != null)
-      assignment = parseStatements `${tree.identifier} = $ctx.value`;
-    else
-      assignment = createStatementList();
+    if (left) {
+      var statement = new ExpressionStatement(
+          tree.location,
+          new BinaryExpression(
+              tree.location,
+              left,
+              operator,
+              parseExpression `$ctx.value`));
+      states.push(new FallThroughState(callbackState, fallThroughState,
+                                       [statement]));
+    }
 
-    states.push(new FallThroughState(callbackState, fallThroughState, assignment));
-    //  case errbackState:
-    //    throw $ctx.err;
-    states.push(new FallThroughState(errbackState, fallThroughState, createStatementList(
-        parseStatement `throw $ctx.err`)));
+    var awaitMachine =
+        new StateMachine(createTaskState, fallThroughState, states, []);
 
-    return new StateMachine(createTaskState, fallThroughState, states, []);
+    if (machine) {
+      awaitMachine = machine.append(awaitMachine);
+    }
+
+    return awaitMachine;
   }
 
   /**
@@ -110,23 +163,29 @@ export class AsyncTransformer extends CPSTransformer {
    * @return {ParseTree}
    */
   transformReturnStatement(tree) {
-    var result = tree.expression;
-    if (result == null) {
-      result = createUndefinedExpression();
+    var expression, machine;
+    if (this.expressionNeedsStateMachine(tree.expression)) {
+      ({expression, machine} = this.expressionToStateMachine(tree.expression));
+    } else {
+      expression = tree.expression || createUndefinedExpression();
     }
+
     var startState = this.allocateState();
     var endState = this.allocateState();
     var completeState = new FallThroughState(startState, endState,
-        // $ctx.result.callback(result);
-        createStatementList(this.createCompleteTask_(result)));
+        parseStatements `$ctx.returnValue = ${expression}`);
     var end = new EndState(endState);
-    return new StateMachine(
+    var returnMachine = new StateMachine(
         startState,
         // TODO: this should not be required, but removing requires making consumers resilient
         // TODO: to INVALID fallThroughState
         this.allocateState(),
         [completeState, end],
         []);
+
+    if (machine)
+      returnMachine = machine.append(returnMachine);
+    return returnMachine;
   }
 
   /**
@@ -156,45 +215,14 @@ export class AsyncTransformer extends CPSTransformer {
     return this.transformCpsFunctionBody(tree, runtimeFunction);
   }
 
-  /** @return {Array.<ParseTree>} */
-  machineEndStatements() {
-    // return;
-    return createStatementList(createReturnStatement(null));
-  }
-
   /**
-   * @param {number} machineEndState
-   * @return {Array.<ParseTree>}
+   * @param {UniqueIdentifierGenerator} identifierGenerator
+   * @param {ErrorReporter} reporter
+   * @param {Block} body
+   * @return {Block}
    */
-  machineFallThroughStatements(machineEndState) {
-    // $ctx.waitTask.callback(undefined);
-    // $ctx.state = machineEndState;
-    // break;
-    return createStatementList(
-        this.createCompleteTask_(createUndefinedExpression()),
-        createAssignStateStatement(machineEndState),
-        createBreakStatement());
+  static transformAsyncBody(identifierGenerator, reporter, body) {
+    return new AsyncTransformer(identifierGenerator, reporter).
+        transformAsyncBody(body);
   }
-
-  /**
-   * @param {number} machineEndState
-   * @return {Array.<ParseTree>}
-   */
-  machineRethrowStatements(machineEndState) {
-    return createStatementList(
-        parseStatement `$ctx.reject($ctx.storedException)`,
-        // $ctx.state = machineEndState
-        createAssignStateStatement(machineEndState),
-        // break;
-        createBreakStatement());
-  }
-}
-
-/**
- * @param {ErrorReporter} reporter
- * @param {Block} body
- * @return {Block}
- */
-AsyncTransformer.transformAsyncBody = function(reporter, body) {
-  return new AsyncTransformer(reporter).transformAsyncBody(body);
 };

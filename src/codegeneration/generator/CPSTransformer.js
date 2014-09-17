@@ -15,24 +15,29 @@
 import {AlphaRenamer} from '../AlphaRenamer';
 import {BreakContinueTransformer} from './BreakContinueTransformer';
 import {
-  BREAK_STATEMENT,
+  BLOCK,
   CASE_CLAUSE,
-  CONTINUE_STATEMENT,
-  STATE_MACHINE,
-  VARIABLE_DECLARATION_LIST,
-  VARIABLE_STATEMENT
+  CONDITIONAL_EXPRESSION,
+  EXPRESSION_STATEMENT,
+  PAREN_EXPRESSION,
+  STATE_MACHINE
 } from '../../syntax/trees/ParseTreeType';
 import {
+  AnonBlock,
+  Block,
   CaseClause,
+  IfStatement,
   SwitchStatement
 } from '../../syntax/trees/ParseTrees';
 import {CatchState} from './CatchState';
 import {ConditionalState} from './ConditionalState';
+import {ExplodeExpressionTransformer} from '../ExplodeExpressionTransformer';
 import {FallThroughState} from './FallThroughState';
 import {FinallyFallThroughState} from './FinallyFallThroughState';
 import {FinallyState} from './FinallyState';
-import {FindVisitor} from '../FindVisitor';
+import {FindInFunctionScope} from '../FindInFunctionScope';
 import {ParseTreeTransformer} from '../ParseTreeTransformer';
+import {TempVarTransformer} from '../TempVarTransformer';
 import {assert} from '../../util/assert';
 import {
   parseExpression,
@@ -46,28 +51,20 @@ import {
   SwitchClause,
   SwitchState
 } from './SwitchState';
-import {VAR} from '../../syntax/TokenType';
 import {TryState} from './TryState';
 import {
   createAssignStateStatement,
-  createAssignmentExpression,
   createBreakStatement,
   createCaseClause,
-  createCommaExpression,
   createDefaultClause,
-  createEmptyStatement,
   createExpressionStatement,
   createFunctionBody,
   createIdentifierExpression as id,
   createMemberExpression,
   createNumberLiteral,
-  createStatementList,
   createSwitchStatement,
-  createVariableDeclaration,
-  createVariableDeclarationList,
-  createVariableStatement
 } from '../ParseTreeFactory';
-import {variablesInBlock} from '../../semantics/VariableBinder';
+import HoistVariablesTransformer from '../HoistVariablesTransformer';
 
 class LabelState {
   constructor(name, continueState, fallThroughState) {
@@ -77,15 +74,41 @@ class LabelState {
   }
 }
 
-class NeedsStateMachine extends FindVisitor {
+class NeedsStateMachine extends FindInFunctionScope {
   visitBreakStatement(tree) {
-    this.found = tree.name !== null;
+    this.found = true;
   }
   visitContinueStatement(tree) {
-    this.found = tree.name !== null;
+    this.found = true;
   }
   visitStateMachine(tree) {
     this.found = true;
+  }
+  visitYieldExpression(tee) {
+    this.found = true;
+  }
+}
+
+function needsStateMachine(tree) {
+  var visitor = new NeedsStateMachine(tree);
+  return visitor.found;
+}
+
+class HoistVariables extends HoistVariablesTransformer {
+  constructor() {
+    super(true);  // Hoist functions.
+  }
+
+  /**
+   * Override to not inject the hoisted variables. We will manually inject them
+   * later.
+   */
+  prependVariables(statements) {
+    return statements;
+  }
+
+  prependFunctions(statements) {
+    return statements;
   }
 }
 
@@ -132,16 +155,22 @@ class NeedsStateMachine extends FindVisitor {
  * across the entire function body. The state machine merge process may need to
  * perform state id substitution on states of the merged state machines.
  */
-export class CPSTransformer extends ParseTreeTransformer {
+export class CPSTransformer extends TempVarTransformer {
   /**
    * @param {ErrorReporter} reporter
    */
-  constructor(reporter) {
-    super();
+  constructor(identifierGenerator, reporter) {
+    super(identifierGenerator);
     this.reporter = reporter;
     this.stateAllocator_ = new StateAllocator();
     this.labelSet_ = Object.create(null);
     this.currentLabel_ = null;
+    this.hoistVariablesTransformer_ = new HoistVariables();
+  }
+
+  expressionNeedsStateMachine(tree) {
+    // TODO(arv): Implement this for the async transformer.
+    return false;
   }
 
   /** @return {number} */
@@ -181,6 +210,8 @@ export class CPSTransformer extends ParseTreeTransformer {
   }
 
   transformFunctionBody(tree) {
+    this.pushTempScope();
+
     // NOTE: tree may contain state machines already ...
     var oldLabels = this.clearLabels_();
 
@@ -188,32 +219,55 @@ export class CPSTransformer extends ParseTreeTransformer {
     var machine = this.transformStatementList_(transformedTree.statements);
 
     this.restoreLabels_(oldLabels);
+
+    this.popTempScope();
     return machine == null ? transformedTree : machine;
   }
 
   /**
-   * @param {Array.<ParseTree>} someTransformed
+   * @param {Array.<ParseTree>} trees This may already contain StateMachine
+   *     trees.
    * @return {StateMachine}
    */
-  transformStatementList_(someTransformed) {
-    // This block has undergone some transformation but may only be variable
-    // transforms. We only need to return a state machine if the block contains
-    // a yield which has been converted to a state machine or contains a break
-    // or continue.
-    if (!this.needsStateMachine_(someTransformed)) {
+  transformStatementList_(trees) {
+    // If we need one or more machines, we want to aggregate the machines andany
+    // free statements into one state machine.
+
+    var groups = [];
+    var newMachine;
+    for (var i = 0; i < trees.length; i++) {
+      if (trees[i].type === STATE_MACHINE) {
+        groups.push(trees[i]);
+      } else if (needsStateMachine(trees[i])) {
+        newMachine = this.ensureTransformed_(trees[i]);
+        groups.push(newMachine);
+      } else {
+        // Accumulate trees.
+        var last = groups[groups.length - 1];
+        if (!(last instanceof Array))
+          groups.push(last = []);
+        last.push(trees[i])
+      }
+    }
+
+    if (groups.length === 1 && groups[0] instanceof Array)
       return null;
+
+    var machine = null;
+
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i] instanceof Array) {
+        newMachine = this.statementsToStateMachine_(groups[i]);
+      } else {
+        newMachine = groups[i];
+      }
+      if (i === 0)
+        machine = newMachine;
+      else
+        machine = machine.append(newMachine);
     }
 
-    // this block contains at least 1 yield statement which has been
-    // transformed into a StateMachine. Transform all remaining statements into
-    // StateMachines then sequence them together.
-    var currentMachine = this.ensureTransformed_(someTransformed[0]);
-    for (var index = 1; index < someTransformed.length; index++) {
-      currentMachine = currentMachine.append(
-          this.ensureTransformed_(someTransformed[index]));
-    }
-
-    return currentMachine;
+    return machine;
   }
 
   /**
@@ -223,21 +277,14 @@ export class CPSTransformer extends ParseTreeTransformer {
   needsStateMachine_(statements) {
     if (statements instanceof Array) {
       for (var i = 0; i < statements.length; i++) {
-        var visitor = new NeedsStateMachine(statements[i]);
-        if (visitor.found)
+        if (needsStateMachine(statements[i]))
           return true;
       }
       return false;
     }
 
     assert(statements instanceof SwitchStatement);
-    for (var i = 0; i < statements.caseClauses.length; i++) {
-      var clause = statements.caseClauses[i];
-      if (this.needsStateMachine_(clause.statements)) {
-        return true;
-      }
-    }
-    return false;
+    return needsStateMachine(statements);
   }
 
   /**
@@ -249,7 +296,7 @@ export class CPSTransformer extends ParseTreeTransformer {
     var machine = this.transformStatementList_(result.statements);
     return machine == null ?
         result :
-        new CaseClause(null, result.expression, createStatementList(machine));
+        new CaseClause(null, result.expression, [machine]);
   }
 
   /**
@@ -260,12 +307,20 @@ export class CPSTransformer extends ParseTreeTransformer {
     var labels = this.getLabels_();
     var label = this.clearCurrentLabel_();
 
-    var result = super.transformDoWhileStatement(tree);
-    if (result.body.type != STATE_MACHINE)
-      return result;
+    var machine, condition, body;
+    if (this.expressionNeedsStateMachine(tree.condition)) {
+      ({machine, expression: condition} =
+          this.expressionToStateMachine(tree.condition));
+      body = this.transformAny(tree.body);
+    } else {
+      var result = super(tree);
+      ({condition, body} = result);
+      if (body.type != STATE_MACHINE)
+        return result;
+    }
 
     // a yield within a do/while loop
-    var loopBodyMachine = result.body;
+    var loopBodyMachine = this.ensureTransformed_(body);
     var startState = loopBodyMachine.startState;
     var conditionState = loopBodyMachine.fallThroughState;
     var fallThroughState = this.allocateState();
@@ -274,12 +329,19 @@ export class CPSTransformer extends ParseTreeTransformer {
 
     this.addLoopBodyStates_(loopBodyMachine, conditionState, fallThroughState,
                             labels, states);
+
+    if (machine) {
+      machine = machine.replaceStartState(conditionState);
+      conditionState = machine.fallThroughState;
+      states.push(...machine.states);
+    }
+
     states.push(
         new ConditionalState(
             conditionState,
             startState,
             fallThroughState,
-            result.condition));
+            condition));
 
     var machine = new StateMachine(startState, fallThroughState, states,
                                    loopBodyMachine.exceptionBlocks);
@@ -313,68 +375,166 @@ export class CPSTransformer extends ParseTreeTransformer {
   transformForStatement(tree) {
     var labels = this.getLabels_();
     var label = this.clearCurrentLabel_();
+    var tmp;
 
-    var result = super.transformForStatement(tree);
-    if (result.body.type != STATE_MACHINE)
-      return result;
+    var initializer = null, initializerMachine;
+    if (tree.initializer) {
+      if (this.expressionNeedsStateMachine(tree.initializer)) {
+        tmp = this.expressionToStateMachine(tree.initializer);
+        initializer = tmp.expression;
+        initializerMachine = tmp.machine;
+      } else {
+        initializer = this.transformAny(tree.initializer);
+      }
+    }
+
+    var condition = null, conditionMachine;
+    if (tree.condition) {
+      if (this.expressionNeedsStateMachine(tree.condition)) {
+        tmp = this.expressionToStateMachine(tree.condition);
+        condition = tmp.expression;
+        conditionMachine = tmp.machine;
+      } else {
+        condition = this.transformAny(tree.condition);
+      }
+    }
+
+    var increment = null, incrementMachine;
+    if (tree.increment) {
+      if (this.expressionNeedsStateMachine(tree.increment)) {
+        tmp = this.expressionToStateMachine(tree.increment);
+        increment = tmp.expression;
+        incrementMachine = tmp.machine;
+      } else {
+        increment = this.transformAny(tree.increment);
+      }
+    }
+
+    var body = this.transformAny(tree.body);
+
+    if (initializer === tree.initializer && condition === tree.condition &&
+        increment === tree.increment && body === tree.body) {
+      return tree;
+    }
+
+    if (!initializerMachine && !conditionMachine && !incrementMachine &&
+        body.type !== STATE_MACHINE) {
+      return new ForStatement(tree.location, initializer, condition,
+          increment, body);
+    }
 
     // a yield within the body of a 'for' statement
-    var loopBodyMachine = result.body;
+    var loopBodyMachine = this.ensureTransformed_(body);
+    var bodyFallThroughId = loopBodyMachine.fallThroughState;
+    var fallThroughId = this.allocateState();
 
-    var incrementState = loopBodyMachine.fallThroughState;
-    var conditionState =
-        result.increment == null && result.condition != null ?
-            incrementState :
-            this.allocateState();
-    var startState =
-        result.initialiser == null ?
-            (result.condition == null ?
-                loopBodyMachine.startState : conditionState) :
-            this.allocateState();
-    var fallThroughState = this.allocateState();
+    var startId;
+    var initializerStartId =
+        initializer ? this.allocateState() : State.INVALID_STATE;
+    var conditionStartId =
+        increment ? this.allocateState() : bodyFallThroughId;
+    var loopStartId = loopBodyMachine.startState;
+    var incrementStartId = bodyFallThroughId;
 
     var states = [];
-    if (result.initialiser != null) {
+
+    if (initializer) {
+      startId = initializerStartId;
+      var initialiserFallThroughId;
+      if (condition)
+        initialiserFallThroughId = conditionStartId;
+      else
+        initialiserFallThroughId = loopStartId;
+
+     var tmpId = initializerStartId;
+
+      if (initializerMachine) {
+        initializerMachine =
+            initializerMachine.replaceStartState(initializerStartId);
+        tmpId = initializerMachine.fallThroughState;
+        states.push(...initializerMachine.states);
+      }
+
       states.push(
           new FallThroughState(
-              startState,
-              conditionState,
-              createStatementList(
-                  createExpressionStatement(result.initialiser))));
-    }
-    if (result.condition != null) {
-      states.push(
-          new ConditionalState(
-              conditionState,
-              loopBodyMachine.startState,
-              fallThroughState,
-              result.condition));
-    } else {
-      // alternative is to renumber the loopBodyMachine.fallThrough to
-      // loopBodyMachine.start
-      states.push(
-          new FallThroughState(
-              conditionState,
-              loopBodyMachine.startState,
-              createStatementList()));
-    }
-    if (result.increment != null) {
-      states.push(
-          new FallThroughState(
-              incrementState,
-              conditionState,
-              createStatementList(
-                  createExpressionStatement(result.increment))));
+              tmpId,
+              initialiserFallThroughId,
+              [createExpressionStatement(initializer)]));
     }
 
-    this.addLoopBodyStates_(loopBodyMachine, incrementState, fallThroughState,
+    if (condition) {
+      if (!initializer)
+        startId = conditionStartId;
+
+      var tmpId = conditionStartId;
+
+      if (conditionMachine) {
+        conditionMachine =
+            conditionMachine.replaceStartState(conditionStartId);
+        tmpId = conditionMachine.fallThroughState;
+        states.push(...conditionMachine.states);
+      }
+
+      states.push(
+        new ConditionalState(
+              tmpId,
+              loopStartId,
+              fallThroughId,
+              condition));
+    }
+
+    if (increment) {
+      var incrementFallThroughId;
+      if (condition)
+        incrementFallThroughId = conditionStartId;
+      else
+        incrementFallThroughId = loopStartId;
+
+      var tmpId = incrementStartId;
+
+      if (incrementMachine) {
+        incrementMachine =
+            incrementMachine.replaceStartState(incrementStartId);
+        tmpId = incrementMachine.fallThroughState;
+        states.push(...incrementMachine.states);
+      }
+
+      states.push(
+          new FallThroughState(
+              tmpId,
+              incrementFallThroughId,
+              [createExpressionStatement(increment)]));
+    }
+
+    // loop body
+    if (!initializer && !condition)
+      startId = loopStartId;
+
+    var continueId;
+    if (increment)
+      continueId = incrementStartId;
+    else if (condition)
+      continueId = conditionStartId;
+    else
+      continueId = loopStartId;
+
+    if (!increment && !condition) {
+      // If we had either increment or condition, that would take the loop
+      // body's fall through ID as its ID. If we have neither we need to change
+      // the loop body's fall through ID to loop back to the loop body's start
+      // ID.
+      loopBodyMachine =
+          loopBodyMachine.replaceFallThroughState(loopBodyMachine.startState);
+    }
+
+    this.addLoopBodyStates_(loopBodyMachine, continueId, fallThroughId,
                             labels, states);
 
-    var machine = new StateMachine(startState, fallThroughState, states,
+    var machine = new StateMachine(startId, fallThroughId, states,
                                   loopBodyMachine.exceptionBlocks);
 
     if (label)
-      machine = machine.replaceStateId(incrementState, label.continueState);
+      machine = machine.replaceStateId(continueId, label.continueState);
 
     return machine;
   }
@@ -403,16 +563,24 @@ export class CPSTransformer extends ParseTreeTransformer {
    * @return {ParseTree}
    */
   transformIfStatement(tree) {
-    var result = super.transformIfStatement(tree);
-    if (result.ifClause.type != STATE_MACHINE &&
-        (result.elseClause == null ||
-         result.elseClause.type != STATE_MACHINE)) {
-      return result;
+    var machine, condition, ifClause, elseClause;
+
+    if (this.expressionNeedsStateMachine(tree.condition)) {
+      ({machine, expression: condition} =
+          this.expressionToStateMachine(tree.condition));
+      ifClause = this.transformAny(tree.ifClause);
+      elseClause = this.transformAny(tree.elseClause);
+    } else {
+      var result = super(tree);
+      ({condition, ifClause, elseClause} = result);
+      if (ifClause.type !== STATE_MACHINE &&
+          (elseClause === null || elseClause.type !== STATE_MACHINE)) {
+        return result;
+      }
     }
 
-    // if containing a yield
-    var ifClause = this.ensureTransformed_(result.ifClause);
-    var elseClause = this.ensureTransformed_(result.elseClause);
+    ifClause = this.ensureTransformed_(ifClause);
+    elseClause = this.ensureTransformed_(elseClause);
 
     var startState = this.allocateState();
     var fallThroughState = ifClause.fallThroughState;
@@ -430,7 +598,7 @@ export class CPSTransformer extends ParseTreeTransformer {
             startState,
             ifState,
             elseState,
-            result.condition));
+            condition));
     states.push(...ifClause.states);
     exceptionBlocks.push(...ifClause.exceptionBlocks);
     if (elseClause != null) {
@@ -445,9 +613,11 @@ export class CPSTransformer extends ParseTreeTransformer {
                                     fallThroughState));
     }
 
-
-    return new StateMachine(startState, fallThroughState, states,
-                            exceptionBlocks);
+    var ifMachine = new StateMachine(startState, fallThroughState, states,
+                                     exceptionBlocks);
+    if (machine)
+      ifMachine = machine.append(ifMachine);
+    return ifMachine;
   }
 
   /**
@@ -509,8 +679,8 @@ export class CPSTransformer extends ParseTreeTransformer {
     if (result === tree.statement) {
       result = tree;
     } else if (result.type === STATE_MACHINE) {
-      result = result.replaceStateId(result.startState, startState);
-      result = result.replaceStateId(result.fallThroughState, fallThroughState);
+      result = result.replaceStartState(startState);
+      result = result.replaceFallThroughState(fallThroughState);
     }
 
     this.restoreLabels_(oldLabels);
@@ -563,9 +733,16 @@ export class CPSTransformer extends ParseTreeTransformer {
   transformSwitchStatement(tree) {
     var labels = this.getLabels_();
 
-    var result = super.transformSwitchStatement(tree);
-    if (!this.needsStateMachine_(result))
-      return result;
+    var expression, machine, caseClauses;
+    if (this.expressionNeedsStateMachine(tree.expression)) {
+      ({expression, machine} = this.expressionToStateMachine(tree.expression));
+      caseClauses = this.transformList(tree.caseClauses);
+    } else {
+      var result = super.transformSwitchStatement(tree);
+      if (!needsStateMachine(result))
+        return result;
+      ({expression, caseClauses} = result);
+    }
 
     // a yield within a switch statement
     var startState = this.allocateState();
@@ -576,8 +753,8 @@ export class CPSTransformer extends ParseTreeTransformer {
     var tryStates = [];
     var hasDefault = false;
 
-    for (var index = result.caseClauses.length - 1; index >= 0; index--) {
-      var clause = result.caseClauses[index];
+    for (var index = caseClauses.length - 1; index >= 0; index--) {
+      var clause = caseClauses[index];
       if (clause.type == CASE_CLAUSE) {
         var caseClause = clause;
         nextState =
@@ -599,10 +776,13 @@ export class CPSTransformer extends ParseTreeTransformer {
       clauses.push(new SwitchClause(null, fallThroughState));
     }
     states.push(
-        new SwitchState(startState, result.expression, clauses.reverse()));
+        new SwitchState(startState, expression, clauses.reverse()));
 
-    return new StateMachine(startState, fallThroughState, states.reverse(),
-                            tryStates);
+    var switchMachine = new StateMachine(startState, fallThroughState,
+        states.reverse(), tryStates);
+    if (machine)
+      switchMachine = machine.append(switchMachine);
+    return switchMachine;
   }
 
   /**
@@ -633,12 +813,12 @@ export class CPSTransformer extends ParseTreeTransformer {
    */
   transformTryStatement(tree) {
     var result = super.transformTryStatement(tree);
-    if (result.body.type != STATE_MACHINE &&
-        (result.catchBlock == null ||
-         result.catchBlock.catchBody.type != STATE_MACHINE)) {
+    var {body, catchBlock, finallyBlock} = result;
+    if (body.type != STATE_MACHINE &&
+        (catchBlock == null || catchBlock.catchBody.type != STATE_MACHINE) &&
+        (finallyBlock == null || finallyBlock.block.type != STATE_MACHINE)) {
       return result;
     }
-    // NOTE: yield inside finally caught in FinallyBlock transform methods
 
     // We inject a pushTry at the beginning of the try block and popTry at the
     // end as well as popTry at the beginning of catch and finally.
@@ -661,21 +841,22 @@ export class CPSTransformer extends ParseTreeTransformer {
 
     var pushTryState = this.statementToStateMachine_(
         parseStatement `$ctx.pushTry(
-            ${result.catchBlock && outerCatchState},
-            ${result.finallyBlock && outerFinallyState});`);
+            ${catchBlock && outerCatchState},
+            ${finallyBlock && outerFinallyState});`);
 
-    var tryMachine = this.ensureTransformed_(result.body);
+    var tryMachine = this.ensureTransformed_(body);
     tryMachine = pushTryState.append(tryMachine);
 
-    if (result.catchBlock !== null) {
+    if (catchBlock !== null) {
       var popTry = this.statementToStateMachine_(
           parseStatement `$ctx.popTry();`);
       tryMachine = tryMachine.append(popTry);
 
-      var catchBlock = result.catchBlock;
       var exceptionName = catchBlock.binding.identifierToken.value;
       var catchMachine = this.ensureTransformed_(catchBlock.catchBody);
       var catchStart = this.allocateState();
+
+      this.addMachineVariable(exceptionName);
 
       var states = [
         ...tryMachine.states,
@@ -706,8 +887,7 @@ export class CPSTransformer extends ParseTreeTransformer {
       tryMachine = tryMachine.replaceStateId(catchStart, outerCatchState);
     }
 
-    if (result.finallyBlock != null) {
-      var finallyBlock = result.finallyBlock;
+    if (finallyBlock != null) {
       var finallyMachine = this.ensureTransformed_(finallyBlock.block);
 
       var popTry = this.statementToStateMachine_(
@@ -740,63 +920,6 @@ export class CPSTransformer extends ParseTreeTransformer {
   }
 
   /**
-   * Local variables are lifted out of moveNext to the enclosing function in
-   * the generated code.  Because of this there's no good way to codegen block
-   * scoped let/const variables where there is a yield in the scope of the
-   * block scoped variable.
-   *
-   * @param {VariableStatement} tree
-   * @return {ParseTree}
-   */
-  transformVariableStatement(tree) {
-    var declarations = this.transformVariableDeclarationList(tree.declarations);
-    if (declarations == tree.declarations) {
-      return tree;
-    }
-    if (declarations == null) {
-      return createEmptyStatement();
-    }
-    if (declarations.type == VARIABLE_DECLARATION_LIST) {
-      // let/const - just transform for now
-      return createVariableStatement(declarations);
-    }
-    return createExpressionStatement(declarations);
-  }
-
-  /**
-   * This is the initialiser of a for loop. Convert into an expression
-   * containing the initialisers.
-   *
-   * @param {VariableDeclarationList} tree
-   * @return {ParseTree}
-   */
-  transformVariableDeclarationList(tree) {
-    if (tree.declarationType == VAR) {
-      var expressions = [];
-      for (var i = 0; i < tree.declarations.length; i++) {
-        var declaration = tree.declarations[i];
-        if (declaration.initialiser != null) {
-          expressions.push(
-              createAssignmentExpression(
-                  id(
-                      this.transformAny(declaration.lvalue)),
-                  this.transformAny(declaration.initialiser)));
-        }
-      }
-      var list = expressions;
-      if (list.length == 0) {
-        return null;
-      } else if (list.length == 1) {
-        return list[0];
-      } else {
-        return createCommaExpression(expressions);
-      }
-    }
-    // let/const - just transform for now
-    return super.transformVariableDeclarationList(tree);
-  }
-
-  /**
    * @param {WhileStatement} tree
    * @return {ParseTree}
    */
@@ -804,23 +927,40 @@ export class CPSTransformer extends ParseTreeTransformer {
     var labels = this.getLabels_();
     var label = this.clearCurrentLabel_();
 
-    var result = super.transformWhileStatement(tree);
-    if (result.body.type != STATE_MACHINE)
-      return result;
+    var condition, machine, body;
+    if (this.expressionNeedsStateMachine(tree.condition)) {
+      ({machine, expression: condition} =
+          this.expressionToStateMachine(tree.condition));
+      body = this.transformAny(tree.body);
+    } else {
+      var result = super.transformWhileStatement(tree);
+      ({condition,body} = result);
+      if (body.type !== STATE_MACHINE)
+        return result;
+    }
+
 
     // a yield within a while loop
-    var loopBodyMachine = result.body;
+    var loopBodyMachine = this.ensureTransformed_(body);
     var startState = loopBodyMachine.fallThroughState;
     var fallThroughState = this.allocateState();
 
     var states = [];
+    var conditionStart = startState;
+    if (machine) {
+      machine = machine.replaceStartState(startState);
+      conditionStart = machine.fallThroughState;
+
+      // An expression cannot generate exceptionBlocks.
+      states.push(...machine.states);
+    }
 
     states.push(
         new ConditionalState(
-            startState,
+            conditionStart,
             loopBodyMachine.startState,
             fallThroughState,
-            result.condition));
+            condition));
 
     this.addLoopBodyStates_(loopBodyMachine, startState, fallThroughState,
                             labels, states);
@@ -863,46 +1003,28 @@ export class CPSTransformer extends ParseTreeTransformer {
     }`;
   }
 
-  //   var $ctx.state = machine.startState,
-  //   ... lifted local variables ...
-  //   ... caught exception variables ...
-  /**
-   * @param {Block} tree
-   * @param {StateMachine} machine
-   * @return {Array.<ParseTree>}
-   */
-  getMachineVariables(tree, machine) {
-    // Lift locals ...
-    var liftedIdentifiers = variablesInBlock(tree, true);
-
-    // ... and caught exceptions
-    // TODO: This changes the scope of caught exception variables from 'let' to
-    // 'var'. Fix this once we have 'let' bindings in V8.
-    var allCatchStates = machine.allCatchStates();
-    for (var i = 0; i < allCatchStates.length; i++) {
-      liftedIdentifiers[allCatchStates[i].identifier] = true;
-    }
-
-    // Sort identifiers to produce a stable output order
-    var liftedIdentifierList = Object.keys(liftedIdentifiers).sort();
-    if (liftedIdentifierList.length === 0)
-      return [];
-
-    var declarations = liftedIdentifierList.map((liftedIdentifier) => {
-      return createVariableDeclaration(liftedIdentifier, null);
-    });
-
-    return [
-      createVariableStatement(createVariableDeclarationList(VAR, declarations))
-    ];
+  addTempVar() {
+    var name = this.getTempIdentifier();
+    this.addMachineVariable(name);
+    return name;
   }
 
-  transformCpsFunctionBody(tree, runtimeMethod) {
+  addMachineVariable(name) {
+    this.hoistVariablesTransformer_.addVariable(name);
+  }
+
+  transformCpsFunctionBody(tree, runtimeMethod, functionRef = undefined) {
     var alphaRenamedTree = AlphaRenamer.rename(tree, 'arguments', '$arguments');
     var hasArguments = alphaRenamedTree !== tree;
 
+    // We hoist all the variables. They are not even inserted at the top in this
+    // call but added later, since we use the same set of variable names for the
+    // machine generated variables.
+    var hoistedTree =
+        this.hoistVariablesTransformer_.transformAny(alphaRenamedTree);
+
     // transform to a state machine
-    var maybeMachine = this.transformAny(alphaRenamedTree);
+    var maybeMachine = this.transformAny(hoistedTree);
     if (this.reporter.hadError())
       return tree;
 
@@ -921,16 +1043,26 @@ export class CPSTransformer extends ParseTreeTransformer {
 
     // Clean up start and end states.
     machine = machine.
-        replaceStateId(machine.fallThroughState, State.END_STATE).
-        replaceStateId(machine.startState, State.START_STATE);
+        replaceFallThroughState(State.END_STATE).
+        replaceStartState(State.START_STATE);
 
-    var statements = this.getMachineVariables(tree, machine);
+    var statements = [];
+    if (this.hoistVariablesTransformer_.hasFunctions())
+      statements.push(...this.hoistVariablesTransformer_.getFunctions());
+    if (this.hoistVariablesTransformer_.hasVariables())
+      statements.push(this.hoistVariablesTransformer_.getVariableStatement());
     if (hasArguments)
       statements.push(parseStatement `var $arguments = arguments;`);
-    statements.push(parseStatement
-        `return ${runtimeMethod}(
-            ${this.generateMachineInnerFunction(machine)},
-            this);`);
+    if (functionRef) {
+      statements.push(parseStatement
+          `return ${runtimeMethod}(
+              ${this.generateMachineInnerFunction(machine)},
+              ${functionRef}, this);`);
+    } else {
+      statements.push(parseStatement
+          `return ${runtimeMethod}(
+              ${this.generateMachineInnerFunction(machine)}, this);`);
+    }
 
     // TODO(arv): The result should be an instance of Generator.
     // https://code.google.com/p/traceur-compiler/issues/detail?id=109
@@ -974,6 +1106,10 @@ export class CPSTransformer extends ParseTreeTransformer {
     return tree;
   }
 
+  transformArrowFunctionExpression(tree) {
+    return tree;
+  }
+
   /**
    * @param {StateMachine} tree
    * @return {ParseTree}
@@ -989,7 +1125,12 @@ export class CPSTransformer extends ParseTreeTransformer {
    * @return {StateMachine}
    */
   statementToStateMachine_(statement) {
-    return this.statementsToStateMachine_([statement]);
+    var statements;
+    if (statement.type === BLOCK)
+      statements = statement.statements;
+    else
+      statements = [statement];
+    return this.statementsToStateMachine_(statements);
   }
 
   /**
@@ -1046,25 +1187,8 @@ export class CPSTransformer extends ParseTreeTransformer {
     // add finally fallthrough dispatch states
     this.addFinallyFallThroughDispatches(null, machine.exceptionBlocks, cases);
 
-    // $ctx is used as a sentinel for ending the statemachine.
-    // case machineEndState: return $ctx;
-    cases.push(
-        createCaseClause(
-            createNumberLiteral(machineEndState),
-            this.machineEndStatements()));
+    cases.push(createDefaultClause(parseStatements `return $ctx.end()`));
 
-    // add top level rethrow exception state
-    // case rethrow:
-    //   throw $ctx.storedException;
-    cases.push(
-        createCaseClause(
-            createNumberLiteral(rethrowState),
-            this.machineRethrowStatements(machineEndState)));
-
-    // default: throw "traceur compiler bug invalid state in state machine";
-    cases.push(createDefaultClause(parseStatements
-        `throw 'traceur compiler bug: invalid state in state machine: ' +
-            $ctx.state;`));
     return cases;
   }
 
@@ -1091,7 +1215,7 @@ export class CPSTransformer extends ParseTreeTransformer {
             var statements;
             // all but the last case fallthrough to the last case clause
             if (index < enclosingFinallyState.tryStates.length) {
-              statements = createStatementList();
+              statements = [];
             } else {
               statements = parseStatements `
                   $ctx.state = $ctx.finallyFallThrough;
@@ -1102,13 +1226,13 @@ export class CPSTransformer extends ParseTreeTransformer {
                 createCaseClause(createNumberLiteral(destination), statements));
           }
           caseClauses.push(
-              createDefaultClause(
-                  createStatementList(
-                      // $ctx.state = enclosingFinallyState.startState;
-                      createAssignStateStatement(
-                          enclosingFinallyState.finallyState),
-                      // break;
-                      createBreakStatement())));
+              createDefaultClause([
+                // $ctx.state = enclosingFinallyState.startState;
+                createAssignStateStatement(
+                    enclosingFinallyState.finallyState),
+                // break;
+                createBreakStatement()
+              ]));
 
           // case finally.fallThroughState:
           //   switch ($fallThrough) {
@@ -1125,11 +1249,12 @@ export class CPSTransformer extends ParseTreeTransformer {
           cases.push(
               createCaseClause(
                   createNumberLiteral(finallyState.fallThroughState),
-                  createStatementList(
-                      createSwitchStatement(
-                          createMemberExpression('$ctx', 'finallyFallThrough'),
-                          caseClauses),
-                      createBreakStatement())));
+                  [
+                    createSwitchStatement(
+                        createMemberExpression('$ctx', 'finallyFallThrough'),
+                        caseClauses),
+                    createBreakStatement()
+                  ]));
         } else {
           // case finally.fallThroughState:
           //   $ctx.state = $fallThrough;
@@ -1152,26 +1277,21 @@ export class CPSTransformer extends ParseTreeTransformer {
     }
   }
 
+  transformVariableDeclarationList(tree) {
+    // The only declarations left are const/let.
+    this.reporter.reportError(
+        tree.location && tree.location.start,
+        'Traceur: const/let declarations in a block containing a yield are ' +
+        'not yet implemented');
+    return tree;
+  }
+
   /**
    * transforms break/continue statements and their parents to state machines
    * @param {ParseTree} maybeTransformedStatement
    * @return {ParseTree}
    */
   maybeTransformStatement_(maybeTransformedStatement) {
-    // Check for block scoped variables in a block containing a yield. There's
-    // no way to codegen that with a precompiler but could be implemented
-    // directly in a VM.
-    if (maybeTransformedStatement.type == VARIABLE_STATEMENT &&
-        maybeTransformedStatement.declarations.
-            declarationType != VAR) {
-      this.reporter.reportError(
-          maybeTransformedStatement.location != null ?
-              maybeTransformedStatement.location.start :
-              null,
-          'traceur: const/let declaration may not be ' +
-          'in a block containing a yield.');
-    }
-
     // transform break/continue statements and their parents to state machines
     var breakContinueTransformed =
         new BreakContinueTransformer(this.stateAllocator_).
@@ -1219,4 +1339,64 @@ export class CPSTransformer extends ParseTreeTransformer {
 
     return this.transformStatementList_(maybeTransformedStatements);
   }
+
+  expressionToStateMachine(tree) {
+    var commaExpression = new ExplodeExpressionTransformer(this).
+        transformAny(tree);
+    var {statements} = new NormalizeCommaExpressionToStatementTransformer().
+        transformAny(commaExpression);
+
+    var lastStatement = statements.pop();
+    assert(lastStatement.type === EXPRESSION_STATEMENT);
+    var expression = lastStatement.expression;
+
+    statements = super.transformList(statements);
+    var machine = this.transformStatementList_(statements);
+
+    return {expression, machine};
+  }
+}
+
+/**
+ * Transformer for transforming a normalized comma expression as returned by the
+ * ExplodeExpressionTransformer into a set of expression statements and if
+ * statements.
+ */
+class NormalizeCommaExpressionToStatementTransformer extends
+    ParseTreeTransformer {
+
+  transformCommaExpression(tree) {
+    var statements = tree.expressions.map((expr) => {
+      if (expr.type === CONDITIONAL_EXPRESSION)
+        return this.transformAny(expr);
+      return createExpressionStatement(expr);
+    });
+    return new AnonBlock(tree.location, statements);
+  }
+
+  transformConditionalExpression(tree) {
+    // a ? b : c
+    // =>
+    // $0 = a, $0 ? ($1 = b, $2 = $1) : ($3 = c, $2 = $3), $2
+    // =>
+    // $0 = a;
+    // if ($0) {
+    //   $1 = b;
+    //   $2 = $1;
+    // } else {
+    //  $3 = c;
+    //  $2 = $3;
+    // }
+    // $2
+    var ifBlock = this.transformAny(tree.left);
+    var elseBlock = this.transformAny(tree.right);
+    return new IfStatement(tree.location, tree.condition,
+        anonBlockToBlock(ifBlock), anonBlockToBlock(elseBlock));
+  }
+}
+
+function anonBlockToBlock(tree) {
+  if (tree.type === PAREN_EXPRESSION)
+    return anonBlockToBlock(tree.expression);
+  return new Block(tree.location, tree.statements);
 }

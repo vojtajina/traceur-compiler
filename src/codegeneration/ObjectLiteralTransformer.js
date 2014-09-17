@@ -14,16 +14,12 @@
 
 import {FindVisitor} from './FindVisitor';
 import {
-  FormalParameterList,
   FunctionExpression,
   IdentifierExpression,
   LiteralExpression
 } from '../syntax/trees/ParseTrees';
 import {TempVarTransformer} from './TempVarTransformer';
-import {
-  IDENTIFIER,
-  STRING
-} from '../syntax/TokenType';
+import {IDENTIFIER} from '../syntax/TokenType';
 import {
   COMPUTED_PROPERTY_NAME,
   LITERAL_PROPERTY_NAME
@@ -42,7 +38,7 @@ import {
   createStringLiteral
 } from './ParseTreeFactory';
 import {propName} from '../staticsemantics/PropName';
-import {transformOptions} from '../options';
+import {transformOptions} from '../Options';
 
 /**
  * FindAdvancedProperty class that finds if an object literal contains a
@@ -269,9 +265,7 @@ export class ObjectLiteralTransformer extends TempVarTransformer {
       return super.transformSetAccessor(tree);
 
     var body = this.transformAny(tree.body);
-    var parameter = this.transformAny(tree.parameter);
-    var parameterList = new FormalParameterList(parameter.location,
-                                                [parameter]);
+    var parameterList = this.transformAny(tree.parameterList);
     var func = createFunctionExpression(parameterList, body);
     return this.createProperty_(tree.name,
         {
@@ -282,9 +276,9 @@ export class ObjectLiteralTransformer extends TempVarTransformer {
   }
 
   transformPropertyMethodAssignment(tree) {
-    var func = new FunctionExpression(tree.location, null, tree.isGenerator,
-        this.transformAny(tree.formalParameterList), tree.typeAnnotation, [],
-        this.transformAny(tree.functionBody));
+    var func = new FunctionExpression(tree.location, null, tree.functionKind,
+        this.transformAny(tree.parameterList), tree.typeAnnotation, [],
+        this.transformAny(tree.body));
     if (!this.needsAdvancedTransform) {
       // m() { }
       //  =>

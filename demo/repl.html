@@ -21,15 +21,34 @@
 <title>Traceur</title>
 <script>
 if (location.host === 'traceur-compiler.googlecode.com') {
-  location.replace('http://google.github.io/traceur-compiler/demo/repl.html' +
+  location.replace('https://google.github.io/traceur-compiler/demo/repl.html' +
       location.hash);
 }
 </script>
-<link rel="stylesheet" href="../third_party/codemirror2/lib/codemirror.css">
-<script src="../third_party/codemirror2/lib/codemirror.js"></script>
-<script src="../third_party/codemirror2/mode/javascript/javascript.js"></script>
+
+<!-- css and js files for CodeMirror from http://codemirror.net/demo/sublime.html -->
+
+<link rel="stylesheet" href="../third_party/CodeMirror-4.0.3/lib/codemirror.css">
+<link rel="stylesheet" href="../third_party/CodeMirror-4.0.3/addon/fold/foldgutter.css">
+<link rel="stylesheet" href="../third_party/CodeMirror-4.0.3/addon/dialog/dialog.css">
+
+<script src="../third_party/CodeMirror-4.0.3/lib/codemirror.js"></script>
+<script src="../third_party/CodeMirror-4.0.3/addon/search/searchcursor.js"></script>
+<script src="../third_party/CodeMirror-4.0.3/addon/search/search.js"></script>
+<script src="../third_party/CodeMirror-4.0.3/addon/dialog/dialog.js"></script>
+<script src="../third_party/CodeMirror-4.0.3/addon/edit/matchbrackets.js"></script>
+<script src="../third_party/CodeMirror-4.0.3/addon/edit/closebrackets.js"></script>
+<script src="../third_party/CodeMirror-4.0.3/addon/comment/comment.js"></script>
+<script src="../third_party/CodeMirror-4.0.3/addon/wrap/hardwrap.js"></script>
+<script src="../third_party/CodeMirror-4.0.3/addon/fold/foldcode.js"></script>
+<script src="../third_party/CodeMirror-4.0.3/addon/fold/brace-fold.js"></script>
+<script src="../third_party/CodeMirror-4.0.3/mode/javascript/javascript.js"></script>
+<script src="../third_party/CodeMirror-4.0.3/keymap/sublime.js"></script>
+
 <script src="../bin/traceur.js"></script>
+
 <link rel="stylesheet" href="//fonts.googleapis.com/css?family=Droid+Sans+Mono|Droid+Sans">
+
 <style>
 
 html, body {
@@ -41,19 +60,29 @@ html, body {
   box-sizing: border-box;
 }
 
-.CodeMirror-scroll {
+.CodeMirror {
   border: 1px solid #ddd;
   height: auto;
+  width: -webkit-calc(50% - 15px);
+  width: calc(50% - 15px);
+  font-family:  'Droid Sans Mono', sans-serif;
+  font-size: 12px;
+  margin: 5px;
+  line-height: 1.2;
+}
+
+.CodeMirror-scroll {
+  overflow-y: hidden;
+  overflow-x: auto;
   min-height: 300px;
+}
+
+.output-wrapper {
+  overflow: hidden;
 }
 
 html.hide-output .output-wrapper {
   display: none;
-}
-
-.CodeMirror {
-  width: -webkit-calc(50% - 15px);
-  width: calc(50% - 15px);
 }
 
 html.hide-output .CodeMirror {
@@ -65,15 +94,13 @@ h1 {
   margin: 5px;
 }
 
-textarea,
-pre,
-.CodeMirror {
-  font: 12px 'Droid Sans Mono', sans-serif;
-  margin: 5px;
-}
-
 .error {
   color: red;
+}
+
+.error, .source-map {
+  margin: 10px;
+  flex: 1;
 }
 
 .options-area {
@@ -162,6 +189,10 @@ pre,
   align-items: center;
 }
 
+.sourceMapRange {
+  background-color: rgba(192, 192, 192, 0.43);
+}
+
 </style>
 </head>
 <body>
@@ -192,9 +223,11 @@ pre,
   <pre class="error"></pre>
   <pre class="source-map"></pre>
 </div>
-
+<div id='mocha'></div>
 <script>
-System.import('./repl-module');
+System.import('./repl-module').catch(function(ex) {
+  console.error('Internal Error ', ex.stack || ex);
+});
 </script>
 </body>
 </html>

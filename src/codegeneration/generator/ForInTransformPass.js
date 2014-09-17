@@ -32,7 +32,7 @@ import {
 import {
   createArgumentList,
   createAssignmentStatement,
-  createBinaryOperator,
+  createBinaryExpression,
   createBlock,
   createCallStatement,
   createContinueStatement,
@@ -108,7 +108,7 @@ export class ForInTransformPass extends TempVarTransformer {
             // $keys.push($p)
             createCallStatement(
                 createMemberExpression(keys, PUSH),
-                createArgumentList(createIdentifierExpression(p)))));
+                createArgumentList([createIdentifierExpression(p)]))));
 
     var i = this.getTempIdentifier();
 
@@ -118,16 +118,16 @@ export class ForInTransformPass extends TempVarTransformer {
         createIdentifierExpression(i));
 
     var originalKey, assignOriginalKey;
-    if (tree.initialiser.type == VARIABLE_DECLARATION_LIST) {
-      var decList = tree.initialiser;
+    if (tree.initializer.type == VARIABLE_DECLARATION_LIST) {
+      var decList = tree.initializer;
       originalKey = createIdentifierExpression(decList.declarations[0].lvalue);
       // var key = $keys[$i];
       assignOriginalKey = createVariableStatement(decList.declarationType,
           originalKey.identifierToken, lookup);
-    } else if (tree.initialiser.type == IDENTIFIER_EXPRESSION) {
-      originalKey = tree.initialiser;
+    } else if (tree.initializer.type == IDENTIFIER_EXPRESSION) {
+      originalKey = tree.initializer;
       // key = $keys[$i];
-      assignOriginalKey = createAssignmentStatement(tree.initialiser, lookup);
+      assignOriginalKey = createAssignmentStatement(tree.initializer, lookup);
     } else {
       throw new Error('Invalid left hand side of for in loop');
     }
@@ -143,7 +143,7 @@ export class ForInTransformPass extends TempVarTransformer {
             createUnaryExpression(
                 createOperatorToken(BANG),
                 createParenExpression(
-                    createBinaryOperator(
+                    createBinaryExpression(
                         originalKey,
                         createOperatorToken(IN),
                         createIdentifierExpression(collection)))),
@@ -160,7 +160,7 @@ export class ForInTransformPass extends TempVarTransformer {
             // var $i = 0
             createVariableDeclarationList(VAR, i, createNumberLiteral(0)),
             // $i < $keys.length
-            createBinaryOperator(
+            createBinaryExpression(
                 createIdentifierExpression(i),
                 createOperatorToken(OPEN_ANGLE),
                 createMemberExpression(keys, LENGTH)),

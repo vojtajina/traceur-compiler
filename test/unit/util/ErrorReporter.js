@@ -14,10 +14,14 @@
 
 suite('ErrorReporter.js', function() {
 
-  var MutedErrorReporter =
-      $traceurRuntime.ModuleStore.getForTesting('src/util/MutedErrorReporter').MutedErrorReporter;
-  var SyntaxErrorReporter =
-      $traceurRuntime.ModuleStore.getForTesting('src/util/SyntaxErrorReporter').SyntaxErrorReporter;
+  function get(name) {
+    return $traceurRuntime.ModuleStore.getForTesting(name);
+  }
+
+  var MutedErrorReporter = get('src/util/MutedErrorReporter').MutedErrorReporter;
+  var SyntaxErrorReporter = get('src/util/SyntaxErrorReporter').SyntaxErrorReporter;
+  var SourcePosition = get('src/util/SourcePosition').SourcePosition;
+  var MultipleErrors = get('src/util/CollectingErrorReporter').MultipleErrors;
 
   var originalConsoleError = console.error;
   var args;
@@ -37,27 +41,23 @@ suite('ErrorReporter.js', function() {
   test('ErrorReporter', function() {
     var r = new traceur.util.ErrorReporter();
 
-    r.reportError(null, 'a%sc%se', 'b', 'd');
+    r.reportError(null, 'abcde');
 
     assert.equal(args.length, 1);
-    assert.equal(args[0][0], 'a%sc%se');
-    assert.equal(args[0][1], 'b');
-    assert.equal(args[0][2], 'd');
+    assert.equal(args[0][0], 'abcde');
   });
 
   test('ErrorReporterWithLocation', function() {
     var r = new traceur.util.ErrorReporter();
     var file = new traceur.syntax.SourceFile('test.js', '');
-    var location = new traceur.util.SourcePosition(file, 1);
+    var location = new SourcePosition(file, 1);
     location.line_ = 2;
     location.column_ = 3;
 
-    r.reportError(location, 'a%sc%se', 'b', 'd');
+    r.reportError(location, 'abcde');
 
     assert.equal(args.length, 1);
-    assert.equal(args[0][0], 'test.js:3:4: a%sc%se');
-    assert.equal(args[0][1], 'b');
-    assert.equal(args[0][2], 'd');
+    assert.equal(args[0][0], 'test.js:3:4: abcde');
   });
 
   test('MutedErrorReporter', function() {
@@ -70,13 +70,40 @@ suite('ErrorReporter.js', function() {
     var r = new SyntaxErrorReporter();
     var thrown;
     try {
-      r.reportError(null, 'a%sc%se', 'b', 'd');
+      r.reportError(null, 'abcde');
     } catch(syntaxError) {
       thrown = syntaxError;
     } finally {
       assert(thrown);
       assert.equal('SyntaxError: abcde', thrown + '');
     }
+  });
+
+  test('MultipleErrors', function() {
+    var accumulated = [new SyntaxError('one'), new SyntaxError('two')];
+    var error = new MultipleErrors(accumulated);
+    assert.throws(function() {
+      throw error;
+    }, MultipleErrors);
+    assert.equal(error + '', 'MultipleErrors: ' + accumulated.join('\n'));
+  });
+
+  test('Only one MultipleErrors', function() {
+    var accumulated = [new SyntaxError('one')];
+    var error = new MultipleErrors(accumulated);
+    assert.throws(function() {
+      throw error;
+    }, MultipleErrors);
+    assert.equal(error + '', accumulated.join('\n'));
+  });
+
+  test('No MultipleErrors', function() {
+    var accumulated = null;
+    var error = new MultipleErrors(accumulated);
+    assert.throws(function() {
+      throw error;
+    }, MultipleErrors);
+    assert.equal(error + '', '');
   });
 
   test('Format', function() {
@@ -100,7 +127,7 @@ suite('ErrorReporter.js', function() {
       return;
 
     var file = new traceur.syntax.SourceFile('error_reporter_test.html', '');
-    var location = new traceur.util.SourcePosition(file, 1);
+    var location = new SourcePosition(file, 1);
     location.line_ = 108;
     location.column_ = 3;
 

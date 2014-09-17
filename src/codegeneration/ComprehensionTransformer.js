@@ -17,12 +17,14 @@ import {FunctionExpression} from '../syntax/trees/ParseTrees';
 import {TempVarTransformer} from './TempVarTransformer';
 import {
   LET,
+  STAR,
   VAR
 } from '../syntax/TokenType';
 import {
   COMPREHENSION_FOR,
   COMPREHENSION_IF
-  } from '../syntax/trees/ParseTreeType';
+} from '../syntax/trees/ParseTreeType';
+import {Token} from '../syntax/Token';
 import {
   createCallExpression,
   createEmptyParameterList,
@@ -32,7 +34,7 @@ import {
   createParenExpression,
   createVariableDeclarationList
 } from './ParseTreeFactory';
-import {options} from '../options';
+import {options} from '../Options';
 
 /**
  * Base class for GeneratorComprehensionTransformer and
@@ -71,9 +73,9 @@ export class ComprehensionTransformer extends TempVarTransformer {
         case COMPREHENSION_FOR:
           var left = this.transformAny(item.left);
           var iterator = this.transformAny(item.iterator);
-          var initialiser = createVariableDeclarationList(bindingKind,
+          var initializer = createVariableDeclarationList(bindingKind,
                                                           left, null);
-          statement = createForOfStatement(initialiser, iterator, statement);
+          statement = createForOfStatement(initializer, iterator, statement);
           break;
         default:
           throw new Error('Unreachable.');
@@ -86,7 +88,9 @@ export class ComprehensionTransformer extends TempVarTransformer {
     if (suffix)
       statements.push(suffix);
 
-    var func = new FunctionExpression(null, null, isGenerator,
+    var functionKind = isGenerator ? new Token(STAR, null) : null;
+
+    var func = new FunctionExpression(null, null, functionKind,
                                       createEmptyParameterList(), null, [],
                                       createFunctionBody(statements));
 

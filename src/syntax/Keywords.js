@@ -36,7 +36,7 @@ var keywords = [
   'import',
   'in',
   'instanceof',
-  'let',
+  'let',  // should be in strictKeywords
   'new',
   'return',
   'super',
@@ -57,10 +57,7 @@ var keywords = [
   // 7.8 Literals
   'null',
   'true',
-  'false',
-
-  // Traceur Specific
-  'await'
+  'false'
 ];
 
 var strictKeywords = [

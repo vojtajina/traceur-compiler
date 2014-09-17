@@ -31,7 +31,7 @@
     }
   }
 
-  var reDirectoryResources = /'([^\s]*?\/resources\/[^']*)'/;
+  var reDirectoryResources = /([^\s]*?[\/\\]Modules[\/\\][^:]*)\:/;
 
   function parseProlog(source) {
     var returnValue = {
@@ -52,13 +52,9 @@
       } else if (line.indexOf('// Async.') === 0) {
         returnValue.async = true;
       } else if ((m = /\/\ Options:\s*(.+)/.exec(line))) {
-        traceur.options.fromString(m[1]);
+        returnValue.traceurOptions = traceur.util.CommandOptions.fromString(m[1]);
       } else if ((m = /\/\/ Error:\s*(.+)/.exec(line))) {
-        var errLine = m[1];
-        var resolvedError = errLine.replace(reDirectoryResources, function(match, p1) {
-          return '\'' + System.normalize(p1) + '\'';
-        });
-        returnValue.expectedErrors.push(resolvedError);
+        returnValue.expectedErrors.push(m[1]);
       }
     });
     return returnValue;
@@ -109,13 +105,36 @@
     throw new chai.AssertionError(message);
   }
 
-  function runCode(code, name) {
-    try {
-      ('global', eval)(code);
-    } catch (e) {
-      fail('Error running compiled output for : ' + name + '\n' + e + '\n' +
-           code);
-    }
+  function hasMatchingError(expected, actualErrors, pathRe) {
+    var m;
+    if (!pathRe || !(m = pathRe.exec(expected)))
+      return actualErrors.some(function(error) {
+        return error.indexOf(expected) !== -1;
+      });
+
+    var expectedPath = m[1];
+    var expectedNonPath =
+        expected.replace(new RegExp(expectedPath, 'g'), '<PATH>');
+
+    return actualErrors.some(function (error) {
+      var m = pathRe.exec(error);
+      if (!m)
+        return false;
+
+      var actualPath = m[1];
+      var actualNonPath = error.replace(new RegExp(actualPath, 'g'), '<PATH>');
+      return actualNonPath.indexOf(expectedNonPath) !== -1;
+    });
+  }
+
+  var Options = traceur.get('./Options').Options;
+
+  function setOptions(load, options) {
+    var traceurOptions = new Options(options.traceurOptions);
+    traceurOptions.debug = true;
+    traceurOptions.freeVariableChecker = true;
+    traceurOptions.validate = true;
+    load.metadata.traceurOptions = traceurOptions;
   }
 
   function featureTest(name, url, fileLoader) {
@@ -125,17 +144,9 @@
     });
 
     test(name, function(done) {
-      traceur.options.debug = true;
-      traceur.options.freeVariableChecker = true;
-      traceur.options.validate = true;
-
-      var reporter = new traceur.util.TestErrorReporter();
-      var LoaderHooks = traceur.runtime.LoaderHooks;
-      var loaderHooks = new LoaderHooks(reporter, './', fileLoader);
-
-      // TODO(jjb): TestLoaderHooks extends LoaderHooks. But this file is ES5.
+      var baseURL = './';
       var options;
-      loaderHooks.translateSynchronous = function(load) {
+      function translateSynchronous(load) {
         var source = load.source;
         // Only top level file can set options.
         if (!options)
@@ -145,27 +156,37 @@
           return '';
 
         if (options.async) {
-          global.done = function() {
-            handleShouldCompile();
-            done();
+          global.done = function(ex) {
+            handleShouldCompile(ex);
+            done(ex);
           };
         }
 
+        setOptions(load, options);
         return source;
       }
 
-      var moduleLoader = new traceur.runtime.TraceurLoader(loaderHooks);
+      var moduleLoader = new traceur.runtime.TraceurLoader(fileLoader, baseURL);
 
-      function handleShouldCompile() {
+      moduleLoader.translate = function(load) {
+        return new Promise(function(resolve, reject){
+          resolve(translateSynchronous(load));
+        });
+      }
+
+      function handleShouldCompile(error) {
         if (!options.shouldCompile) {
-          assert.isTrue(reporter.hadError(),
+          assert.isTrue(error !== undefined,
               'Expected error compiling ' + name + ', but got none.');
-
-          options.expectedErrors.forEach(function(expected) {
-            assert.isTrue(reporter.hasMatchingError(expected),
-                          'Missing expected error: ' + expected +
-                          '\nActual errors:\n' +
-                          reporter.errors.join('\n'));
+          var actualErrors = error.errors || [error];
+          actualErrors = actualErrors.map(function(error) {
+            return error + '';
+          });
+          options.expectedErrors.forEach(function(expected, index) {
+            assert.isTrue(
+                hasMatchingError(expected, actualErrors, reDirectoryResources),
+                'Missing expected error: ' + expected +
+                '\nActual errors:\n' + actualErrors);
           });
         }
       }
@@ -184,11 +205,12 @@
       }
 
       function handleFailure(error) {
-        handleShouldCompile();
-        // TODO(arv): Improve how errors are passed through the module loader.
-        if (options.shouldCompile)
-          throw reporter.errors[0];
-        done();
+        handleShouldCompile(error);
+        if (options.shouldCompile) {
+          done(error)
+        } else {
+          done();
+        }
       }
 
       if (/\.module\.js$/.test(url)) {
@@ -212,7 +234,11 @@
         return;
       }
 
-      var reporter = new traceur.util.TestErrorReporter();
+      traceur.options.reset();
+      if (options.traceurOptions)
+        traceur.options.setFromObject(options.traceurOptions);
+
+      var reporter = new traceur.util.CollectingErrorReporter();
 
       function parse(source) {
         var file = new traceur.syntax.SourceFile(name, source);
@@ -228,7 +254,7 @@
 
       if (reporter.hadError()) {
         fail('Error compiling ' + name + '.\n' +
-             reporter.errors.join('\n'));
+             reporter.errorsAsString());
         return;
       }
 

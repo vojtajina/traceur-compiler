@@ -14,132 +14,77 @@
 
 import {
   BLOCK,
+  CLASS_DECLARATION,
+  FUNCTION_DECLARATION,
   IF_STATEMENT,
+  LITERAL_EXPRESSION,
   POSTFIX_EXPRESSION,
   UNARY_EXPRESSION
 } from '../syntax/trees/ParseTreeType';
 import {ParseTreeVisitor} from '../syntax/ParseTreeVisitor';
 import {
   AS,
+  ASYNC,
+  AWAIT,
   FROM,
   GET,
   OF,
   MODULE,
   SET
 } from '../syntax/PredefinedName';
-import {Token} from '../syntax/Token';
-import {getKeywordType} from '../syntax/Keywords';
 import {
   isIdentifierPart,
   isWhitespace
 } from '../syntax/Scanner';
 
 import {
-  AMPERSAND,
-  AMPERSAND_EQUAL,
-  AND,
   ARROW,
   AT,
-  AWAIT,
   BACK_QUOTE,
-  BANG,
-  BAR,
-  BAR_EQUAL,
   BREAK,
-  CARET,
-  CARET_EQUAL,
   CASE,
   CATCH,
   CLASS,
-  CLOSE_ANGLE,
   CLOSE_CURLY,
   CLOSE_PAREN,
   CLOSE_SQUARE,
   COLON,
   COMMA,
-  CONST,
   CONTINUE,
   DEBUGGER,
   DEFAULT,
-  DELETE,
   DO,
   DOT_DOT_DOT,
   ELSE,
-  END_OF_FILE,
-  ENUM,
   EQUAL,
-  EQUAL_EQUAL,
-  EQUAL_EQUAL_EQUAL,
-  ERROR,
   EXPORT,
   EXTENDS,
-  FALSE,
   FINALLY,
   FOR,
   FUNCTION,
-  GREATER_EQUAL,
-  IDENTIFIER,
   IF,
-  IMPLEMENTS,
   IMPORT,
   IN,
-  INSTANCEOF,
-  INTERFACE,
-  LEFT_SHIFT,
-  LEFT_SHIFT_EQUAL,
-  LESS_EQUAL,
-  LET,
   MINUS,
-  MINUS_EQUAL,
   MINUS_MINUS,
   NEW,
-  NO_SUBSTITUTION_TEMPLATE,
-  NOT_EQUAL,
-  NOT_EQUAL_EQUAL,
-  NULL,
   NUMBER,
-  OPEN_ANGLE,
   OPEN_CURLY,
   OPEN_PAREN,
   OPEN_SQUARE,
-  OR,
-  PACKAGE,
-  PERCENT,
-  PERCENT_EQUAL,
   PERIOD,
   PLUS,
-  PLUS_EQUAL,
   PLUS_PLUS,
-  PRIVATE,
-  PROTECTED,
-  PUBLIC,
   QUESTION,
-  REGULAR_EXPRESSION,
   RETURN,
-  RIGHT_SHIFT,
-  RIGHT_SHIFT_EQUAL,
   SEMI_COLON,
-  SLASH,
-  SLASH_EQUAL,
   STAR,
-  STAR_EQUAL,
   STATIC,
-  STRING,
   SUPER,
   SWITCH,
-  TEMPLATE_HEAD,
-  TEMPLATE_MIDDLE,
-  TEMPLATE_TAIL,
   THIS,
   THROW,
-  TILDE,
-  TRUE,
   TRY,
-  TYPEOF,
-  UNSIGNED_RIGHT_SHIFT,
-  UNSIGNED_RIGHT_SHIFT_EQUAL,
-  VAR,
-  VOID,
   WHILE,
   WITH,
   YIELD
@@ -213,8 +158,6 @@ export class ParseTreeWriter extends ParseTreeVisitor {
       this.currentLineComment_ = `Line: ${line}.${column}`;
     }
 
-    this.currentLocation = tree.location;
-
     super.visitAny(tree);
 
     // set background color to normal
@@ -275,35 +218,46 @@ export class ParseTreeWriter extends ParseTreeVisitor {
    * @param {ArrowFunctionExpression} tree
    */
   visitArrowFunctionExpression(tree) {
+    if (tree.functionKind) {
+      this.write_(tree.functionKind);
+      // TODO(arv): write space no allowed new line.
+      this.writeSpace_();
+    }
     this.write_(OPEN_PAREN);
-    this.visitAny(tree.formalParameters);
+    this.visitAny(tree.parameterList);
     this.write_(CLOSE_PAREN);
     this.writeSpace_();
     this.write_(ARROW);
     this.writeSpace_();
-    this.visitAny(tree.functionBody);
+    this.visitAny(tree.body);
   }
 
   /**
-   * @param {AwaitStatement} tree
+   * @param {AssignmentElement} tree
    */
-  visitAwaitStatement(tree) {
-    this.write_(AWAIT);
-    if (tree.identifier !== null) {
-      this.writeSpace_();
-      this.write_(tree.identifier);
+  visitAssignmentElement(tree) {
+    this.visitAny(tree.assignment);
+    if (tree.initializer) {
       this.writeSpace_();
       this.write_(EQUAL);
+      this.writeSpace_();
+      this.visitAny(tree.initializer);
     }
-    this.writeSpace_();
-    this.visitAny(tree.expression);
-    this.write_(SEMI_COLON);
   }
 
   /**
-   * @param {BinaryOperator} tree
+   * @param {AwaitExpression} tree
    */
-  visitBinaryOperator(tree) {
+  visitAwaitExpression(tree) {
+    this.write_(AWAIT);
+    this.writeSpace_();
+    this.visitAny(tree.expression);
+  }
+
+  /**
+   * @param {BinaryExpression} tree
+   */
+  visitBinaryExpression(tree) {
     var left = tree.left;
     this.visitAny(left);
     var operator = tree.operator;
@@ -333,11 +287,11 @@ export class ParseTreeWriter extends ParseTreeVisitor {
     this.currentParameterTypeAnnotation_ = null;
     this.visitAny(tree.binding);
     this.writeTypeAnnotation_(typeAnnotation);
-    if (tree.initialiser) {
+    if (tree.initializer) {
       this.writeSpace_();
       this.write_(EQUAL);
       this.writeSpace_();
-      this.visitAny(tree.initialiser);
+      this.visitAny(tree.initializer);
     }
   }
 
@@ -496,6 +450,14 @@ export class ParseTreeWriter extends ParseTreeVisitor {
     this.write_(SEMI_COLON);
   }
 
+  visitCoverInitializedName(tree) {
+    this.write_(tree.name);
+    this.writeSpace_();
+    this.write_(tree.equalToken);
+    this.writeSpace_();
+    this.visitAny(tree.initializer);
+  }
+
   /**
    * @param {DebuggerStatement} tree
    */
@@ -551,7 +513,13 @@ export class ParseTreeWriter extends ParseTreeVisitor {
     this.write_(DEFAULT);
     this.writeSpace_();
     this.visitAny(tree.expression);
-    this.write_(SEMI_COLON);
+    switch (tree.expression.type) {
+      case CLASS_DECLARATION:
+      case FUNCTION_DECLARATION:
+        break;
+      default:
+        this.write_(SEMI_COLON);
+    }
   }
 
   /**
@@ -621,7 +589,7 @@ export class ParseTreeWriter extends ParseTreeVisitor {
     this.write_(FOR);
     this.writeSpace_();
     this.write_(OPEN_PAREN);
-    this.visitAny(tree.initialiser);
+    this.visitAny(tree.initializer);
     this.writeSpace_();
     this.write_(OF);
     this.writeSpace_();
@@ -637,7 +605,7 @@ export class ParseTreeWriter extends ParseTreeVisitor {
     this.write_(FOR);
     this.writeSpace_();
     this.write_(OPEN_PAREN);
-    this.visitAny(tree.initialiser);
+    this.visitAny(tree.initializer);
     this.writeSpace_();
     this.write_(IN);
     this.writeSpace_();
@@ -653,7 +621,7 @@ export class ParseTreeWriter extends ParseTreeVisitor {
     this.write_(FOR);
     this.writeSpace_();
     this.write_(OPEN_PAREN);
-    this.visitAny(tree.initialiser);
+    this.visitAny(tree.initializer);
     this.write_(SEMI_COLON);
     this.writeSpace_();
     this.visitAny(tree.condition);
@@ -719,9 +687,11 @@ export class ParseTreeWriter extends ParseTreeVisitor {
 
   visitFunction_(tree) {
     this.writeAnnotations_(tree.annotations);
+    if (tree.isAsyncFunction())
+      this.write_(tree.functionKind);
     this.write_(FUNCTION);
-    if (tree.isGenerator)
-      this.write_(STAR);
+    if (tree.isGenerator())
+      this.write_(tree.functionKind);
 
     if (tree.name) {
       this.writeSpace_();
@@ -729,11 +699,11 @@ export class ParseTreeWriter extends ParseTreeVisitor {
     }
 
     this.write_(OPEN_PAREN);
-    this.visitAny(tree.formalParameterList);
+    this.visitAny(tree.parameterList);
     this.write_(CLOSE_PAREN);
     this.writeTypeAnnotation_(tree.typeAnnotation);
     this.writeSpace_();
-    this.visitAny(tree.functionBody);
+    this.visitAny(tree.body);
   }
 
   visitGeneratorComprehension(tree) {
@@ -822,7 +792,7 @@ export class ParseTreeWriter extends ParseTreeVisitor {
   visitImportDeclaration(tree) {
     this.write_(IMPORT);
     this.writeSpace_();
-    if (this.importClause) {
+    if (tree.importClause) {
       this.visitAny(tree.importClause);
       this.writeSpace_();
       this.write_(FROM);
@@ -836,13 +806,13 @@ export class ParseTreeWriter extends ParseTreeVisitor {
    * @param {ImportSpecifier} tree
    */
   visitImportSpecifier(tree) {
-    this.write_(tree.lhs);
-    if (tree.rhs !== null) {
+    if (tree.name) {
+      this.write_(tree.name);
       this.writeSpace_();
       this.write_(AS);
       this.writeSpace_();
-      this.write_(tree.rhs);
     }
+    this.visitAny(tree.binding);
   }
 
   visitImportSpecifierSet(tree) {
@@ -884,6 +854,13 @@ export class ParseTreeWriter extends ParseTreeVisitor {
    */
   visitMemberExpression(tree) {
     this.visitAny(tree.operand);
+    // If we have `1 .memberName` we need to ensure we add a space or the
+    // generated code will not be valid.
+    if (tree.operand.type === LITERAL_EXPRESSION &&
+        tree.operand.literalToken.type === NUMBER) {
+      if (!/\.|e|E/.test(tree.operand.literalToken.value))
+        this.writeRequiredSpace_();
+    }
     this.write_(PERIOD);
     this.write_(tree.memberName);
   }
@@ -922,9 +899,12 @@ export class ParseTreeWriter extends ParseTreeVisitor {
    * @param {ModuleDeclaration} tree
    */
   visitModuleDeclaration(tree) {
-    this.write_(MODULE);
+    this.write_(IMPORT);
     this.writeSpace_();
-    this.write_(tree.identifier);
+    this.write_(STAR);
+    this.writeSpace_();
+    this.write_(AS);
+    this.visitAny(tree.binding);
     this.writeSpace_();
     this.write_(FROM);
     this.writeSpace_();
@@ -1021,15 +1001,19 @@ export class ParseTreeWriter extends ParseTreeVisitor {
       this.writeSpace_();
     }
 
-    if (tree.isGenerator)
+    if (tree.isGenerator())
       this.write_(STAR);
+
+    if (tree.isAsyncFunction())
+      this.write_(ASYNC);
+
     this.visitAny(tree.name);
     this.write_(OPEN_PAREN);
-    this.visitAny(tree.formalParameterList);
+    this.visitAny(tree.parameterList);
     this.write_(CLOSE_PAREN);
     this.writeSpace_();
     this.writeTypeAnnotation_(tree.typeAnnotation);
-    this.visitAny(tree.functionBody);
+    this.visitAny(tree.body);
   }
 
   /**
@@ -1055,8 +1039,10 @@ export class ParseTreeWriter extends ParseTreeVisitor {
    */
   visitTemplateLiteralExpression(tree) {
     // Template Literals have important whitespace semantics.
-    this.visitAny(tree.operand);
-    this.writeSpace_();
+    if (tree.operand) {
+      this.visitAny(tree.operand);
+      this.writeSpace_();
+    }
     this.writeRaw_(BACK_QUOTE);
     this.visitList(tree.elements);
     this.writeRaw_(BACK_QUOTE);
@@ -1111,7 +1097,7 @@ export class ParseTreeWriter extends ParseTreeVisitor {
     this.writeSpace_();
     this.visitAny(tree.name);
     this.write_(OPEN_PAREN);
-    this.visitAny(tree.parameter);
+    this.visitAny(tree.parameterList);
     this.write_(CLOSE_PAREN);
     this.writeSpace_();
     this.visitAny(tree.body);
@@ -1236,11 +1222,11 @@ export class ParseTreeWriter extends ParseTreeVisitor {
   visitVariableDeclaration(tree) {
     this.visitAny(tree.lvalue);
     this.writeTypeAnnotation_(tree.typeAnnotation);
-    if (tree.initialiser !== null) {
+    if (tree.initializer !== null) {
       this.writeSpace_();
       this.write_(EQUAL);
       this.writeSpace_();
-      this.visitAny(tree.initialiser);
+      this.visitAny(tree.initializer);
     }
   }
 

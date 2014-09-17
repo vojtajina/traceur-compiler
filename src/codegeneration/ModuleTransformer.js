@@ -13,39 +13,52 @@
 // limitations under the License.
 
 import {
+  AnonBlock,
   BindingElement,
-  BindingIdentifier,
   EmptyStatement,
   LiteralPropertyName,
   ObjectPattern,
   ObjectPatternField,
   Script
 } from '../syntax/trees/ParseTrees';
+import {DestructuringTransformer} from './DestructuringTransformer';
 import {DirectExportVisitor} from './module/DirectExportVisitor';
 import {TempVarTransformer} from './TempVarTransformer';
 import {
+  CLASS_DECLARATION,
   EXPORT_DEFAULT,
-  EXPORT_SPECIFIER
+  EXPORT_SPECIFIER,
+  FUNCTION_DECLARATION,
+  IMPORT_SPECIFIER_SET
 } from '../syntax/trees/ParseTreeType';
 import {VAR} from '../syntax/TokenType';
 import {assert} from '../util/assert';
 import {
   createArgumentList,
-  createBindingIdentifier,
   createExpressionStatement,
   createIdentifierExpression,
   createIdentifierToken,
   createMemberExpression,
   createObjectLiteralExpression,
   createUseStrictDirective,
-  createVariableStatement
+  createVariableStatement,
 } from './ParseTreeFactory';
+import {
+  parseOptions,
+  transformOptions
+} from '../Options';
 import {
   parseExpression,
   parsePropertyDefinition,
   parseStatement,
   parseStatements
 } from './PlaceholderParser';
+
+class DestructImportVarStatement extends DestructuringTransformer {
+  createGuardedExpression(tree) {
+    return tree;
+  }
+}
 
 export class ModuleTransformer extends TempVarTransformer {
   /**
@@ -77,20 +90,24 @@ export class ModuleTransformer extends TempVarTransformer {
   transformModule(tree) {
     this.moduleName = tree.moduleName;
 
-    this.pushTempVarState();
+    this.pushTempScope();
 
-    var statements = [
-      createUseStrictDirective(),
-      parseStatement `var __moduleName = ${this.moduleName};`,
-      ...this.transformList(tree.scriptItemList),
-      this.createExportStatement()
-    ];
+    var statements = this.transformList(tree.scriptItemList);
 
-    this.popTempVarState();
+    statements = this.appendExportStatement(statements);
 
-    statements = this.wrapModule(statements);
+    this.popTempScope();
+
+    statements = this.wrapModule(this.moduleProlog().concat(statements));
 
     return new Script(tree.location, statements);
+  }
+
+  moduleProlog() {
+    var statements = [createUseStrictDirective()];
+    if (this.moduleName)
+      statements.push(parseStatement `var __moduleName = ${this.moduleName};`);
+    return statements;
   }
 
   wrapModule(statements) {
@@ -141,22 +158,35 @@ export class ModuleTransformer extends TempVarTransformer {
     return this.exportVisitor_.namedExports.map((exp) => {
       // export_name: {get: function() { return export_name },
       return this.getGetterExport(exp);
-    });
+    }).concat(this.exportVisitor_.namedExports.map((exp) => {
+      return this.getSetterExport(exp);
+    })).filter((e) => e);
   }
 
-  createExportStatement() {
-    var object = createObjectLiteralExpression(this.getExportProperties());
+  // By default, the module transformer doesn't create setters,
+  // as the Module object is read only.
+  getSetterExport({name, tree, moduleSpecifier}) {
+    return null;
+  }
 
+  getExportObject() {
+    var exportObject = createObjectLiteralExpression(this.getExportProperties());
     if (this.exportVisitor_.starExports.length) {
       var starExports = this.exportVisitor_.starExports;
       var starIdents = starExports.map((moduleSpecifier) => {
         return createIdentifierExpression(
             this.getTempVarNameForModuleSpecifier(moduleSpecifier));
       });
-      var args = createArgumentList(object, ...starIdents);
-      return parseStatement `return $traceurRuntime.exportStar(${args})`;
+      var args = createArgumentList([exportObject, ...starIdents]);
+      return parseExpression `$traceurRuntime.exportStar(${args})`;
     }
-    return parseStatement `return ${object}`;
+    return exportObject;
+  }
+
+  appendExportStatement(statements) {
+    var exportObject = this.getExportObject();
+    statements.push(parseStatement `return ${exportObject}`);
+    return statements;
   }
 
   /**
@@ -172,6 +202,16 @@ export class ModuleTransformer extends TempVarTransformer {
   }
 
   transformExportDefault(tree) {
+    switch (tree.expression.type) {
+      case CLASS_DECLARATION:
+      case FUNCTION_DECLARATION:
+        var nameBinding = tree.expression.name;
+        var name = createIdentifierExpression(nameBinding.identifierToken);
+        return new AnonBlock(null, [
+          tree.expression,
+          parseStatement `var $__default = ${name}`
+        ]);
+    }
     return parseStatement `var $__default = ${tree.expression}`;
   }
 
@@ -196,9 +236,7 @@ export class ModuleTransformer extends TempVarTransformer {
     var name = tree.token.processedValue;
     // import/module {x} from 'name' is relative to the current file.
     var normalizedName = System.normalize(name, this.moduleName);
-    if (this.moduleSpecifierKind_ === 'module')
-      return parseExpression `$traceurRuntime.ModuleStore.get(${normalizedName})`;
-    return parseExpression `$traceurRuntime.getModuleImpl(${normalizedName})`;
+    return parseExpression `System.get(${normalizedName})`;
   }
 
   /**
@@ -207,10 +245,11 @@ export class ModuleTransformer extends TempVarTransformer {
    */
   transformModuleDeclaration(tree) {
     this.moduleSpecifierKind_ = 'module';
-    var initialiser = this.transformAny(tree.expression);
+    var initializer = this.transformAny(tree.expression);
+    var bindingIdentifier = tree.binding.binding;
     // const a = b.c, d = e.f;
     // TODO(arv): const is not allowed in ES5 strict
-    return createVariableStatement(VAR, tree.identifier, initialiser);
+    return createVariableStatement(VAR, bindingIdentifier, initializer);
   }
 
   transformImportedBinding(tree) {
@@ -233,13 +272,26 @@ export class ModuleTransformer extends TempVarTransformer {
     //  =>
     // moduleInstance;
     this.moduleSpecifierKind_ = 'import';
-    if (!tree.importClause)
+    if (!tree.importClause ||
+        (tree.importClause.type === IMPORT_SPECIFIER_SET &&
+         tree.importClause.specifiers.length === 0)) {
       return createExpressionStatement(this.transformAny(tree.moduleSpecifier));
+    }
 
     var binding = this.transformAny(tree.importClause);
-    var initialiser = this.transformAny(tree.moduleSpecifier);
+    var initializer = this.transformAny(tree.moduleSpecifier);
 
-    return createVariableStatement(VAR, binding, initialiser);
+    var varStatement = createVariableStatement(VAR, binding, initializer);
+
+    // If destructuring patterns are kept in the output code, keep this as is,
+    // otherwise transform it here.
+    if (transformOptions.destructuring || !parseOptions.destructuring) {
+      var destructuringTransformer =
+          new DestructImportVarStatement(this.identifierGenerator);
+      varStatement = varStatement.transform(destructuringTransformer);
+    }
+
+    return varStatement;
   }
 
   transformImportSpecifierSet(tree) {
@@ -248,13 +300,12 @@ export class ModuleTransformer extends TempVarTransformer {
   }
 
   transformImportSpecifier(tree) {
-    if (tree.rhs) {
-      var binding = new BindingIdentifier(tree.location, tree.rhs);
-      var bindingElement = new BindingElement(tree.location, binding, null);
-      var name = new LiteralPropertyName(tree.lhs.location, tree.lhs);
+    var binding = tree.binding.binding;
+    var bindingElement = new BindingElement(binding.location, binding, null);
+    if (tree.name) {
+      var name = new LiteralPropertyName(tree.name.location, tree.name);
       return new ObjectPatternField(tree.location, name, bindingElement);
     }
-    return new BindingElement(tree.location,
-        createBindingIdentifier(tree.lhs), null);
+    return bindingElement;
   }
 }

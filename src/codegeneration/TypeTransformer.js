@@ -34,7 +34,7 @@ export class TypeTransformer extends ParseTreeTransformer {
   transformVariableDeclaration(tree) {
     if (tree.typeAnnotation) {
       tree = new VariableDeclaration(tree.location, tree.lvalue, null,
-          tree.initialiser);
+          tree.initializer);
     }
     return super.transformVariableDeclaration(tree);
   }
@@ -55,8 +55,8 @@ export class TypeTransformer extends ParseTreeTransformer {
    */
   transformFunctionDeclaration(tree) {
     if (tree.typeAnnotation) {
-      tree = new FunctionDeclaration(tree.location, tree.name, tree.isGenerator,
-          tree.formalParameterList, null, tree.annotations, tree.functionBody);
+      tree = new FunctionDeclaration(tree.location, tree.name, tree.functionKind,
+          tree.parameterList, null, tree.annotations, tree.body);
     }
 
     return super.transformFunctionDeclaration(tree);
@@ -68,8 +68,8 @@ export class TypeTransformer extends ParseTreeTransformer {
    */
   transformFunctionExpression(tree) {
     if (tree.typeAnnotation) {
-      tree = new FunctionExpression(tree.location, tree.name, tree.isGenerator,
-          tree.formalParameterList, null, tree.annotations, tree.functionBody);
+      tree = new FunctionExpression(tree.location, tree.name, tree.functionKind,
+          tree.parameterList, null, tree.annotations, tree.body);
     }
 
     return super.transformFunctionExpression(tree);
@@ -82,8 +82,8 @@ export class TypeTransformer extends ParseTreeTransformer {
   transformPropertyMethodAssignment(tree) {
     if (tree.typeAnnotation) {
       tree = new PropertyMethodAssignment(tree.location, tree.isStatic,
-          tree.isGenerator, tree.name, tree.formalParameterList, null,
-          tree.annotations, tree.functionBody);
+          tree.functionKind, tree.name, tree.parameterList, null,
+          tree.annotations, tree.body);
     }
 
     return super.transformPropertyMethodAssignment(tree);
