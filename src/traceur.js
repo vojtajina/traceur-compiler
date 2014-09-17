@@ -43,7 +43,7 @@ export var util = {
 
 import {Parser} from './syntax/Parser';
 import {Scanner} from './syntax/Scanner';
-import {Script} from './syntax/trees/ParseTrees';
+import {Script, VariableStatement, VariableDeclarationList} from './syntax/trees/ParseTrees';
 import {SourceFile} from './syntax/SourceFile';
 import {CONSTRUCTOR, FROM} from './syntax/PredefinedName';
 import {Token} from './syntax/Token';
@@ -75,6 +75,8 @@ export var syntax = {
   trees: {
     ParseTree,
     Script,
+    VariableDeclarationList,
+    VariableStatement,
     ParseTreeType: {
       PROPERTY_METHOD_ASSIGNMENT: PROPERTY_METHOD_ASSIGNMENT,
       MEMBER_EXPRESSION: MEMBER_EXPRESSION,
