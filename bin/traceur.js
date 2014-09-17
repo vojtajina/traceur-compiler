@@ -26329,7 +26329,10 @@ System.register("traceur@0.0.63/src/traceur", [], function() {
   };
   var Parser = System.get("traceur@0.0.63/src/syntax/Parser").Parser;
   var Scanner = System.get("traceur@0.0.63/src/syntax/Scanner").Scanner;
-  var Script = System.get("traceur@0.0.63/src/syntax/trees/ParseTrees").Script;
+  var $__863 = System.get("traceur@0.0.63/src/syntax/trees/ParseTrees"),
+      Script = $__863.Script,
+      VariableStatement = $__863.VariableStatement,
+      VariableDeclarationList = $__863.VariableDeclarationList;
   var SourceFile = System.get("traceur@0.0.63/src/syntax/SourceFile").SourceFile;
   var $__865 = System.get("traceur@0.0.63/src/syntax/PredefinedName"),
       CONSTRUCTOR = $__865.CONSTRUCTOR,
@@ -26375,6 +26378,8 @@ System.register("traceur@0.0.63/src/traceur", [], function() {
     trees: {
       ParseTree: ParseTree,
       Script: Script,
+      VariableDeclarationList: VariableDeclarationList,
+      VariableStatement: VariableStatement,
       ParseTreeType: {
         PROPERTY_METHOD_ASSIGNMENT: PROPERTY_METHOD_ASSIGNMENT,
         MEMBER_EXPRESSION: MEMBER_EXPRESSION,
