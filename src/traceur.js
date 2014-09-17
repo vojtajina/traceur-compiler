@@ -43,11 +43,11 @@ export var util = {
 
 import {Parser} from './syntax/Parser';
 import {Scanner} from './syntax/Scanner';
-import {Script} from './syntax/trees/ParseTrees';
+import {Script, VariableStatement, VariableDeclarationList} from './syntax/trees/ParseTrees';
 import {SourceFile} from './syntax/SourceFile';
 import {CONSTRUCTOR, FROM} from './syntax/PredefinedName';
 import {Token} from './syntax/Token';
-import {EQUAL_EQUAL_EQUAL, OPEN_PAREN, CLOSE_PAREN, IMPORT, SEMI_COLON, STAR, OPEN_CURLY, CLOSE_CURLY, COMMA, AT} from './syntax/TokenType';
+import {EQUAL_EQUAL_EQUAL, OPEN_PAREN, CLOSE_PAREN, IMPORT, SEMI_COLON, STAR, OPEN_CURLY, CLOSE_CURLY, COMMA, AT, EQUAL} from './syntax/TokenType';
 import {PROPERTY_METHOD_ASSIGNMENT, MEMBER_EXPRESSION, THIS_EXPRESSION} from './syntax/trees/ParseTreeType';
 import {ParseTree} from './syntax/trees/ParseTree';
 
@@ -59,6 +59,7 @@ export var syntax = {
   Token,
   TokenType: {
     EQUAL_EQUAL_EQUAL,
+    EQUAL,
     OPEN_PAREN,
     CLOSE_PAREN,
     IMPORT,
@@ -75,6 +76,8 @@ export var syntax = {
   trees: {
     ParseTree,
     Script,
+    VariableDeclarationList,
+    VariableStatement,
     ParseTreeType: {
       PROPERTY_METHOD_ASSIGNMENT: PROPERTY_METHOD_ASSIGNMENT,
       MEMBER_EXPRESSION: MEMBER_EXPRESSION,
