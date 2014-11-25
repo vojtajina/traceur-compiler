@@ -54,6 +54,7 @@ UNIT_TESTS = \
 TESTS = \
 	test/node-commonjs-test.js \
 	test/node-amd-test.js \
+	test/node-goog-test.js \
 	test/node-instantiate-test.js \
 	test/node-feature-test.js \
 	test/node-api-test.js \
@@ -110,6 +111,9 @@ test/commonjs: test/commonjs-compiled
 test/amd: test/amd-compiled
 	node_modules/.bin/mocha $(MOCHA_OPTIONS) test/node-amd-test.js
 
+test/goog: test/goog-compiled
+	node_modules/.bin/mocha $(MOCHA_OPTIONS) test/node-goog-test.js
+
 test/features: bin/traceur.js bin/traceur-runtime.js test/test-list.js
 	node_modules/.bin/mocha $(MOCHA_OPTIONS) $(MOCHAX) test/node-feature-test.js
 
@@ -138,6 +142,10 @@ test/commonjs-compiled: force
 test/amd-compiled: force
 	rm -f -r test/amd-compiled/*
 	node src/node/to-amd-compiler.js test/amd test/amd-compiled
+
+test/goog-compiled: force
+	rm -f -r test/goog-compiled/*
+	node src/node/to-goog-compiler.js test/goog test/goog-compiled
 
 test/unit/%.generated.js: test/unit/es6/%.js
 	./traceur --out $@ $(TFLAGS) $<

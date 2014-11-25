@@ -108,6 +108,20 @@ export class Compiler {
     return merge(amdOptions, options);
   }
   /**
+   * Options to create 'goog' module format.
+   *
+   * @param  {Object=} options Traceur options to override defaults.
+   * @return {Object}
+   */
+  static googOptions(options = {}) {
+    var amdOptions = {
+      modules: 'goog',
+      sourceMaps: false,
+      moduleName: false
+    };
+    return merge(amdOptions, options);
+  }
+  /**
    * Options to create 'commonjs' module format.
    *
    * @param  {Object=} options Traceur options to override defaults.
