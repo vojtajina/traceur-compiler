@@ -24,6 +24,7 @@ import {
   PropertyMethodAssignment,
   SetAccessor
 } from '../syntax/trees/ParseTrees.js';
+import {createIdentifierExpression} from '../codegeneration/ParseTreeFactory.js';
 import {
   GET_ACCESSOR,
   PROPERTY_METHOD_ASSIGNMENT,
@@ -153,7 +154,7 @@ export class ClassTransformer extends TempVarTransformer{
     return MakeStrictTransformer.transformTree(tree);
   }
 
-  transformClassElements_(tree, internalName) {
+  transformClassElements_(tree, internalName, originalName) {
     var oldState = this.state_;
     this.state_ = {hasSuper: false};
     var superClass = this.transformAny(tree.superClass);
@@ -183,7 +184,7 @@ export class ClassTransformer extends TempVarTransformer{
 
         case PROPERTY_METHOD_ASSIGNMENT:
           var transformed = this.transformPropertyMethodAssignment_(
-              tree, homeObject, internalName);
+              tree, homeObject, internalName, originalName);
           if (!tree.isStatic && propName(tree) === CONSTRUCTOR) {
             hasConstructor = true;
             constructorParams = transformed.parameterList;
@@ -246,7 +247,7 @@ export class ClassTransformer extends TempVarTransformer{
       object,
       staticObject,
       superClass
-    } = this.transformClassElements_(tree, internalName);
+    } = this.transformClassElements_(tree, internalName, name);
 
     // TODO(arv): Use let.
     var statements = parseStatements `var ${name} = ${func}`;
@@ -280,7 +281,7 @@ export class ClassTransformer extends TempVarTransformer{
       object,
       staticObject,
       superClass
-    } = this.transformClassElements_(tree, name);
+    } = this.transformClassElements_(tree, name, name);
 
     var expression;
 
@@ -310,10 +311,13 @@ export class ClassTransformer extends TempVarTransformer{
     return createParenExpression(this.makeStrict_(expression));
   }
 
-  transformPropertyMethodAssignment_(tree, homeObject, internalName) {
+  transformPropertyMethodAssignment_(tree, homeObject, internalName, originalName) {
     var parameterList = this.transformAny(tree.parameterList);
     var body = this.transformSuperInFunctionBody_(
         tree.body, homeObject, internalName);
+
+    tree.debugName = createIdentifierExpression(originalName + (tree.isStatic ? '$' : '_') + tree.name.literalToken);
+
     if (!tree.isStatic &&
         parameterList === tree.parameterList &&
         body === tree.body) {
@@ -323,7 +327,7 @@ export class ClassTransformer extends TempVarTransformer{
     var isStatic = false;
     return new PropertyMethodAssignment(tree.location, isStatic,
         tree.functionKind, tree.name, parameterList, tree.typeAnnotation,
-        tree.annotations, body);
+        tree.annotations, body, tree.debugName);
   }
 
   transformGetAccessor_(tree, homeObject) {
