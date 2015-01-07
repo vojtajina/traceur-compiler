@@ -133,11 +133,13 @@ function classMethodDebugName(className, methodName, isStatic) {
 export class ClassTransformer extends TempVarTransformer{
   /**
    * @param {UniqueIdentifierGenerator} identifierGenerator
+   * @param {Bool} showDebugNames options.debugNames
    */
-  constructor(identifierGenerator) {
+  constructor(identifierGenerator, debugNames) {
     super(identifierGenerator);
     this.strictCount_ = 0;
     this.state_ = null;
+    this.showDebugNames_ = debugNames;
   }
 
   // Override to handle AnonBlock
@@ -346,7 +348,9 @@ export class ClassTransformer extends TempVarTransformer{
     var body = this.transformSuperInFunctionBody_(
         tree.body, homeObject, internalName);
 
-    tree.debugName = classMethodDebugName(originalName, methodNameFromToken(tree.name), isStatic);
+    if (this.showDebugNames_) {
+      tree.debugName = classMethodDebugName(originalName, methodNameFromToken(tree.name), isStatic);
+    }
 
     if (!tree.isStatic &&
         parameterList === tree.parameterList &&
