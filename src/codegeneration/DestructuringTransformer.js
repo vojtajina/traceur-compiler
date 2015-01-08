@@ -54,6 +54,7 @@ import {
   createIdentifierExpression,
   createMemberExpression,
   createMemberLookupExpression,
+  createNumberLiteral,
   createParenExpression,
   createVariableDeclaration,
   createVariableDeclarationList,
@@ -62,7 +63,6 @@ import {
 import {options} from '../Options.js';
 import {parseExpression} from './PlaceholderParser.js';
 import {prependStatements} from './PrependStatements.js'
-
 
 /**
  * Collects assignments in the desugaring of a pattern.
@@ -73,26 +73,6 @@ class Desugaring {
    */
   constructor(rvalue) {
     this.rvalue = rvalue;
-    this.expressions = [];
-    this.pendingExpressions = [];
-  }
-
-  createIterator(iterId) {
-    this.pendingExpressions.push(parseExpression
-        `${iterId} =
-            ${this.rvalue}[$traceurRuntime.toProperty(Symbol.iterator)]()`);
-  }
-
-  createInitializer(expression) {
-    if (this.pendingExpressions.length === 0) return expression;
-    var expressions = this.pendingExpressions;
-    this.pendingExpressions = [];
-    expressions.push(expression);
-    return createParenExpression(createCommaExpression(expressions));
-  }
-
-  skipHole(iterId) {
-    this.pendingExpressions.push(parseExpression `${iterId}.next()`);
   }
 }
 
@@ -106,6 +86,7 @@ class AssignmentExpressionDesugaring extends Desugaring {
    */
   constructor(rvalue) {
     super(rvalue);
+    this.expressions = [];
   }
 
   /**
@@ -114,15 +95,7 @@ class AssignmentExpressionDesugaring extends Desugaring {
    */
   assign(lvalue, rvalue) {
     lvalue = lvalue instanceof AssignmentElement ? lvalue.assignment : lvalue;
-    rvalue = this.createInitializer(rvalue);
     this.expressions.push(createAssignmentExpression(lvalue, rvalue));
-  }
-
-  createAssignmentExpression(tempId, rvalue) {
-    var expressions = this.expressions;
-    expressions.unshift(createAssignmentExpression(tempId, rvalue));
-    expressions.push(...this.pendingExpressions, tempId);
-    return createParenExpression(createCommaExpression(expressions));
   }
 }
 
@@ -136,6 +109,7 @@ class VariableDeclarationDesugaring extends Desugaring {
    */
   constructor(rvalue) {
     super(rvalue);
+    this.declarations = [];
   }
 
   /**
@@ -145,12 +119,7 @@ class VariableDeclarationDesugaring extends Desugaring {
   assign(lvalue, rvalue) {
     var binding = lvalue instanceof BindingElement ?
         lvalue.binding : createBindingIdentifier(lvalue);
-    rvalue = this.createInitializer(rvalue);
-    this.expressions.push(createVariableDeclaration(binding, rvalue));
-  }
-
-  get declarations() {
-    return this.expressions;
+    this.declarations.push(createVariableDeclaration(binding, rvalue));
   }
 }
 
@@ -188,14 +157,12 @@ export class DestructuringTransformer extends TempVarTransformer {
 
   /**
    * Transforms:
-   *   [a, ...b]] = x
+   *   [a, [b, c]] = x
    * From an assignment expression into:
-   *
-   *  ($__0 = x,
-   *   a = ($__1 = $__0[$traceurRuntime.toProperty(Symbol.iterator)](),
-   *       ($__2 = $__1.next()).done ? void 0 : $__2.value),
-   *   b = $traceurRuntime.iteratorToArray($__1),
-   *   $__0);
+   *   (function (rvalue) {
+   *     a = rvalue[0];
+   *     [b, c] = rvalue[1];
+   *   }).call(this, x);
    *
    * Nested patterns are desugared by recursive calls to transform.
    *
@@ -222,10 +189,16 @@ export class DestructuringTransformer extends TempVarTransformer {
    * @return {ParseTree}
    */
   desugarAssignment_(lvalue, rvalue) {
-    var tempId = createIdentifierExpression(this.addTempVar());
-    var desugaring = new AssignmentExpressionDesugaring(tempId);
+    var tempIdent = createIdentifierExpression(this.addTempVar());
+    var desugaring = new AssignmentExpressionDesugaring(tempIdent);
+
     this.desugarPattern_(desugaring, lvalue);
-    return desugaring.createAssignmentExpression(tempId, rvalue);
+    desugaring.expressions.unshift(
+        createAssignmentExpression(tempIdent, rvalue));
+    desugaring.expressions.push(tempIdent);
+
+    return createParenExpression(
+        createCommaExpression(desugaring.expressions));
   }
 
   /**
@@ -442,7 +415,7 @@ export class DestructuringTransformer extends TempVarTransformer {
 
     if (declarationType === null) {
       statements.push(createExpressionStatement(
-          createCommaExpression(desugaring.expressions)));
+        createCommaExpression(desugaring.expressions)));
     } else {
       statements.push(
           createVariableStatement(
@@ -526,33 +499,29 @@ export class DestructuringTransformer extends TempVarTransformer {
     switch (tree.type) {
       case ARRAY_PATTERN:
         var pattern = tree;
-        this.pushTempScope();
-        var iterId = createIdentifierExpression(this.addTempVar());
-        var iterObjectId = createIdentifierExpression(this.addTempVar());
-        desugaring.createIterator(iterId);
 
         for (var i = 0; i < pattern.elements.length; i++) {
           var lvalue = pattern.elements[i];
           if (lvalue === null) {
             // A skip, for example [a,,c]
-            desugaring.skipHole(iterId);
             continue;
           } else if (lvalue.isSpreadPatternElement()) {
             // Rest of the array, for example [x, ...y] = [1, 2, 3]
             desugaring.assign(
                 lvalue.lvalue,
-                parseExpression `$traceurRuntime.iteratorToArray(${iterId})`);
+                parseExpression
+                    `Array.prototype.slice.call(${desugaring.rvalue}, ${i})`);
           } else {
-            if (lvalue.initializer) {
+            if (lvalue.initializer)
               initializerFound = true;
-            }
             desugaring.assign(
                 lvalue,
-                this.createConditionalIterExpression(iterObjectId, iterId,
-                                                     lvalue.initializer));
+                this.createConditionalMemberLookupExpression(
+                    desugaring.rvalue,
+                    createNumberLiteral(i),
+                    lvalue.initializer));
           }
         }
-        this.popTempScope();
         break;
 
       case OBJECT_PATTERN:
@@ -648,18 +617,6 @@ export class DestructuringTransformer extends TempVarTransformer {
 
     var tempIdent = createIdentifierExpression(this.addTempVar());
     return parseExpression `(${tempIdent} = ${rvalue}[${index}]) === void 0 ?
-        ${initializer} : ${tempIdent}`;
-  }
-
-  createConditionalIterExpression(iterObjectId, iterId, initializer) {
-    var expr = parseExpression `(${iterObjectId} =
-        ${iterId}.next()).done ? void 0 : ${iterObjectId}.value`;
-    if (!initializer) {
-      return expr;
-    }
-    // TODO(arv): Simplify this expression?
-    var tempIdent = createIdentifierExpression(this.addTempVar());
-    return parseExpression `(${tempIdent} = ${expr}) === void 0 ?
         ${initializer} : ${tempIdent}`;
   }
 }
